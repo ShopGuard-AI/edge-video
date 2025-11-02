@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  camera-collector:
+    build: .
+    container_name: camera-collector
+    restart: unless-stopped
+    volumes:
+      # Monta o config.yaml para facilitar a alteração sem reconstruir a imagem
+      - ./config.yaml:/app/config.yaml
+    depends_on:
+      - rabbitmq
+    # Opcional: descomente se precisar que a rede do host seja usada
+    # network_mode: "host"
+
+  rabbitmq:
+    image: "rabbitmq:3.13-management-alpine"
+    container_name: rabbitmq
+    ports:
+      # Porta para o protocolo AMQP
+      - "5672:5672"
+      # Porta para a interface de gerenciamento web
+      - "15672:15672"
+    volumes:
+      # Persiste os dados do RabbitMQ
+      - rabbitmq_data:/var/lib/rabbitmq/
+    environment:
+      - RABBITMQ_DEFAULT_USER=user
+      - RABBITMQ_DEFAULT_PASS=password
+      - RABBITMQ_DEFAULT_VHOST=guard_vhost
+
+volumes:
+  rabbitmq_data:

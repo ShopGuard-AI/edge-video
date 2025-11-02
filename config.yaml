@@ -1,0 +1,27 @@
+interval_ms: 500
+protocol: amqp # amqp | mqtt
+
+process_every_n_frames: 3 # Processa 1 a cada 3 frames (ex: 30fps -> 10fps)
+
+amqp:
+  amqp_url: "amqp://user:password@rabbitmq:5672/guard_vhost"
+  exchange: "cameras"
+  routing_key_prefix: "camera."
+
+mqtt:
+  broker: "tcp://localhost:1883"
+  topic_prefix: "camera/"
+
+compression:
+  enabled: true
+  level: 3
+
+cameras:
+  - id: "cam1"
+    url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=1&subtype=0"
+  - id: "cam2"
+    url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=2&subtype=0"
+
+
+
+
