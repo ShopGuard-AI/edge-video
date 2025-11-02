@@ -1,15 +1,15 @@
-module edge_guard_ai
+module github.com/T3-Labs/edge-video
 
 go 1.24.0
 
 toolchain go1.24.9
 
 require (
+	github.com/disintegration/imaging v1.6.2
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/klauspost/compress v1.18.1
 	github.com/spf13/viper v1.21.0
 	github.com/streadway/amqp v1.1.0
-	gocv.io/x/gocv v0.39.0
 )
 
 require (

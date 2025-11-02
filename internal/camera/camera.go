@@ -1,14 +1,14 @@
 package camera
 
 import (
+	"bytes"
 	"context"
 	"log"
+	"os/exec"
 	"time"
 
-	"edge_guard_ai/internal/mq"
-	"edge_guard_ai/internal/util"
-	
-	"gocv.io/x/gocv"
+	"github.com/T3-Labs/edge-video/internal/mq"
+	"github.com/T3-Labs/edge-video/internal/util"
 )
 
 type CameraConfig struct {
@@ -52,30 +52,41 @@ func (c *Capture) Start() {
 }
 
 func (c *Capture) captureAndPublish() {
-	webcam, err := gocv.OpenVideoCapture(c.config.URL)
+	// Captura um frame da câmera RTSP usando FFmpeg
+	// Comando: ffmpeg -rtsp_transport tcp -i <URL> -frames:v 1 -f image2pipe -vcodec mjpeg -
+	cmd := exec.CommandContext(
+		c.ctx,
+		"ffmpeg",
+		"-rtsp_transport", "tcp",
+		"-i", c.config.URL,
+		"-frames:v", "1",
+		"-f", "image2pipe",
+		"-vcodec", "mjpeg",
+		"-q:v", "5",
+		"-",
+	)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
 	if err != nil {
-		log.Printf("erro ao abrir câmera %s: %v", c.config.ID, err)
+		log.Printf("erro ao capturar frame da câmera %s: %v (stderr: %s)", c.config.ID, err, stderr.String())
 		return
 	}
-	defer webcam.Close()
 
-	img := gocv.NewMat()
-	defer img.Close()
-
-	if ok := webcam.Read(&img); !ok || img.Empty() {
-		log.Printf("erro ao capturar frame da câmera %s", c.config.ID)
+	frameData := stdout.Bytes()
+	if len(frameData) == 0 {
+		log.Printf("frame vazio capturado da câmera %s", c.config.ID)
 		return
 	}
 
-	buf, err := gocv.IMEncode(".jpg", img)
-	if err != nil {
-		log.Printf("erro ao codificar JPEG: %v", err)
-		return
-	}
+	log.Printf("capturado frame da camera %s (%d bytes)", c.config.ID, len(frameData))
 
-	// Publica na fila sem compressão
-	err = c.publisher.Publish(c.ctx, c.config.ID, buf)
+	// Publica o frame JPEG no RabbitMQ
+	err = c.publisher.Publish(c.ctx, c.config.ID, frameData)
 	if err != nil {
-		log.Printf("erro ao publicar frame: %v", err)
+		log.Printf("erro ao publicar frame da câmera %s: %v", c.config.ID, err)
 	}
 }

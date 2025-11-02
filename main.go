@@ -8,9 +8,9 @@ import (
 	"syscall"
 	"time"
 
-	"edge_guard_ai/internal/camera"
-	"edge_guard_ai/internal/mq"
-	"edge_guard_ai/internal/util"
+	"github.com/T3-Labs/edge-video/internal/camera"
+	"github.com/T3-Labs/edge-video/internal/mq"
+	"github.com/T3-Labs/edge-video/internal/util"
 
 	"github.com/spf13/viper"
 )
