@@ -38,8 +38,8 @@ O **Edge Video** é um sistema distribuído de captura e streaming de câmeras R
          │
          ▼
 ┌─────────────────┐
-│  Consumer       │
-│                 │  ← Visualização em Grid 2x3
+│                 │
+│    Consumer     │  ← Visualização em Grid 2x3
 │                 │
 └─────────────────┘
 ```
