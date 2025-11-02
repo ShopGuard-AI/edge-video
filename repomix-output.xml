@@ -1,0 +1,727 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+internal/
+  camera/
+    camera.go
+  mq/
+    amqp.go
+    mqtt.go
+    publisher.go
+  util/
+    compress.go
+.python-version
+config.yaml
+docker-compose.yml
+Dockerfile
+go.mod
+main.go
+pyproject.toml
+test_consumer.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path=".python-version">
+3.11
+</file>
+
+<file path="pyproject.toml">
+[project]
+name = "edge-guard-ai"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "opencv-python>=4.12.0.88",
+    "pika>=1.3.2",
+    "zstandard>=0.25.0",
+]
+</file>
+
+<file path="test_consumer.py">
+import pika
+import sys
+import os
+import cv2
+import numpy as np
+import zstandard as zstd
+
+# --- Configurações ---
+# Estas configurações devem corresponder ao seu docker-compose.yml e config.yaml
+RABBITMQ_HOST = 'localhost'
+RABBITMQ_PORT = 5672
+RABBITMQ_VHOST = 'guard_vhost'
+RABBITMQ_USER = 'user'
+RABBITMQ_PASS = 'password'
+EXCHANGE_NAME = 'cameras'
+# Usamos '#' como routing key para receber todas as mensagens do exchange
+ROUTING_KEY = 'camera.#' 
+QUEUE_NAME = 'test_consumer_queue'
+
+camera_windows = {}
+
+def on_message_received(ch, method, properties, body):
+    """
+    Callback executado sempre que uma mensagem é recebida.
+    Exibe o frame em uma janela do OpenCV identificada pela câmera.
+    """
+    camera_id = method.routing_key
+    print(f" [x] Recebido frame da câmera '{camera_id}'. Tamanho: {len(body)} bytes")
+
+    # Descomprime os dados usando zstd
+    try:
+        dctx = zstd.ZstdDecompressor()
+        decompressed = dctx.decompress(body)
+    except Exception as e:
+        print(f" [!] Erro ao descomprimir dados da câmera '{camera_id}': {e}")
+        return
+
+    # Tenta decodificar o frame como imagem (JPEG/PNG)
+    try:
+        np_arr = np.frombuffer(decompressed, np.uint8)
+        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if img is not None:
+            cv2.imshow(camera_id, img)
+            camera_windows[camera_id] = True
+        else:
+            print(f" [!] Não foi possível decodificar o frame da câmera '{camera_id}'.")
+    except Exception as e:
+        print(f" [!] Erro ao decodificar imagem da câmera '{camera_id}': {e}")
+
+def main():
+    """
+    Função principal que estabelece a conexão e começa a consumir.
+    """
+    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
+    parameters = pika.ConnectionParameters(
+        host=RABBITMQ_HOST,
+        port=RABBITMQ_PORT,
+        virtual_host=RABBITMQ_VHOST,
+        credentials=credentials
+    )
+
+    try:
+        connection = pika.BlockingConnection(parameters)
+        channel = connection.channel()
+
+        # Declara o exchange, garantindo que ele existe
+        channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type='topic', durable=True)
+
+        # Declara uma fila exclusiva e não durável para este consumidor
+        # exclusive=True significa que a fila será deletada quando a conexão for fechada
+        result = channel.queue_declare(queue=QUEUE_NAME, exclusive=True, durable=False)
+        queue_name = result.method.queue
+
+        print(f"[*] Fila '{queue_name}' criada. Aguardando por frames...")
+        
+        # Vincula a fila ao exchange com a routing key
+        channel.queue_bind(exchange=EXCHANGE_NAME, queue=queue_name, routing_key=ROUTING_KEY)
+
+        # Define a função de callback para consumir mensagens da fila
+        channel.basic_consume(queue=queue_name, on_message_callback=on_message_received, auto_ack=True)
+
+        print("[INFO] Pressione 'q' em qualquer janela para sair.")
+        # Loop principal para processar eventos do OpenCV
+        while True:
+            try:
+                channel.connection.process_data_events(time_limit=0.1)
+                # Verifica se alguma janela foi fechada com 'q'
+                if any([cv2.waitKey(1) & 0xFF == ord('q') for _ in camera_windows]):
+                    print("Saindo por comando do usuário.")
+                    break
+            except KeyboardInterrupt:
+                print('Interrompido pelo usuário. Encerrando.')
+                break
+        cv2.destroyAllWindows()
+
+    except pika.exceptions.AMQPConnectionError as e:
+        print(f"Erro de conexão com o RabbitMQ: {e}")
+        print("Verifique se o host, porta, vhost e credenciais estão corretos e se o contêiner do RabbitMQ está em execução.")
+    except KeyboardInterrupt:
+        print('Interrompido pelo usuário. Encerrando.')
+        try:
+            sys.exit(0)
+        except SystemExit:
+            os._exit(0)
+
+if __name__ == '__main__':
+    main()
+</file>
+
+<file path="internal/camera/camera.go">
+package camera
+
+import (
+	"context"
+	"log"
+	"time"
+
+	"edge_guard_ai/internal/mq"
+	"edge_guard_ai/internal/util"
+)
+
+type CameraConfig struct {
+	ID  string
+	URL string
+}
+
+type Capture struct {
+	ctx        context.Context
+	config     CameraConfig
+	interval   time.Duration
+	compressor *util.Compressor
+	publisher  mq.Publisher
+}
+
+func NewCapture(ctx context.Context, config CameraConfig, interval time.Duration, compressor *util.Compressor, publisher mq.Publisher) *Capture {
+	return &Capture{
+		ctx:        ctx,
+		config:     config,
+		interval:   interval,
+		compressor: compressor,
+		publisher:  publisher,
+	}
+}
+
+func (c *Capture) Start() {
+	go func() {
+		ticker := time.NewTicker(c.interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-c.ctx.Done():
+				log.Printf("parando captura para camera %s", c.config.ID)
+				return
+			case <-ticker.C:
+				c.captureAndPublish()
+			}
+		}
+	}()
+}
+
+func (c *Capture) captureAndPublish() {
+	// Simula a captura de um frame da camera
+	frameData := []byte("frame_data_from_" + c.config.ID)
+	log.Printf("capturado frame da camera %s", c.config.ID)
+
+	var dataToPublish []byte
+	var err error
+
+	if c.compressor != nil {
+		dataToPublish, err = c.compressor.Compress(frameData)
+		if err != nil {
+			log.Printf("erro ao comprimir frame: %v", err)
+			return
+		}
+	} else {
+		dataToPublish = frameData
+	}
+
+	err = c.publisher.Publish(c.ctx, c.config.ID, dataToPublish)
+	if err != nil {
+		log.Printf("erro ao publicar frame: %v", err)
+	}
+}
+</file>
+
+<file path="internal/mq/amqp.go">
+package mq
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/streadway/amqp"
+)
+
+type AMQPPublisher struct {
+	conn             *amqp.Connection
+	channel          *amqp.Channel
+	exchange         string
+	routingKeyPrefix string
+}
+
+func NewAMQPPublisher(amqpURL, exchange, routingKeyPrefix string) (*AMQPPublisher, error) {
+	conn, err := amqp.Dial(amqpURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
+	}
+
+	ch, err := conn.Channel()
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to open a channel: %w", err)
+	}
+
+	err = ch.ExchangeDeclare(
+		exchange, // name
+		"topic",  // type
+		true,     // durable
+		false,    // auto-deleted
+		false,    // internal
+		false,    // no-wait
+		nil,      // arguments
+	)
+	if err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to declare an exchange: %w", err)
+	}
+
+	return &AMQPPublisher{
+		conn:             conn,
+		channel:          ch,
+		exchange:         exchange,
+		routingKeyPrefix: routingKeyPrefix,
+	}, nil
+}
+
+func (p *AMQPPublisher) Publish(ctx context.Context, cameraID string, payload []byte) error {
+	routingKey := p.routingKeyPrefix + "." + cameraID
+	err := p.channel.Publish(
+		p.exchange,   // exchange
+		routingKey,   // routing key
+		false,        // mandatory
+		false,        // immediate
+		amqp.Publishing{
+			ContentType: "application/octet-stream",
+			Body:        payload,
+			Timestamp:   time.Now(),
+		})
+	if err != nil {
+		return fmt.Errorf("failed to publish a message: %w", err)
+	}
+	return nil
+}
+
+func (p *AMQPPublisher) Close() error {
+	if p.channel != nil {
+		p.channel.Close()
+	}
+	if p.conn != nil {
+		return p.conn.Close()
+	}
+	return nil
+}
+</file>
+
+<file path="internal/mq/mqtt.go">
+package mq
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
+)
+
+type MQTTPublisher struct {
+	client      mqtt.Client
+	topicPrefix string
+}
+
+func NewMQTTPublisher(broker, topicPrefix string) (*MQTTPublisher, error) {
+	opts := mqtt.NewClientOptions().AddBroker(broker)
+	opts.SetAutoReconnect(true)
+	opts.SetConnectRetry(true)
+
+	client := mqtt.NewClient(opts)
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
+		return nil, fmt.Errorf("mqtt connect: %w", token.Error())
+	}
+	log.Println("Conectado ao broker MQTT")
+	return &MQTTPublisher{client: client, topicPrefix: topicPrefix}, nil
+}
+
+func (p *MQTTPublisher) Publish(ctx context.Context, cameraID string, payload []byte) error {
+	topic := p.topicPrefix + "/" + cameraID
+	token := p.client.Publish(topic, 1, false, payload)
+	sent := token.Wait()
+	if !sent {
+		return fmt.Errorf("o cliente MQTT não conseguiu enviar a mensagem")
+	}
+	if token.Error() != nil {
+		return fmt.Errorf("falha ao publicar no MQTT: %w", token.Error())
+	}
+	return nil
+}
+
+func (p *MQTTPublisher) Close() error {
+	p.client.Disconnect(250)
+	return nil
+}
+</file>
+
+<file path="internal/mq/publisher.go">
+package mq
+
+import "context"
+
+// Publisher provides an abstraction for sending messages from captures.
+type Publisher interface {
+	Publish(ctx context.Context, cameraID string, payload []byte) error
+	Close() error
+}
+</file>
+
+<file path="internal/util/compress.go">
+package util
+
+
+import (
+"bytes"
+"fmt"
+
+
+zstdpkg "github.com/klauspost/compress/zstd"
+)
+
+
+// Compressor wraps a zstd encoder for reuse.
+type Compressor struct {
+encoder *zstdpkg.Encoder
+level int
+}
+
+
+// NewCompressor cria um novo compressor. Level 1..22 (zstd library maps levels internally).
+func NewCompressor(level int) (*Compressor, error) {
+enc, err := zstdpkg.NewWriter(nil, zstdpkg.WithEncoderLevel(zstdpkg.EncoderLevelFromZstd(level)))
+if err != nil {
+return nil, fmt.Errorf("zstd new writer: %w", err)
+}
+return &Compressor{encoder: enc, level: level}, nil
+}
+
+
+func (c *Compressor) Compress(data []byte) ([]byte, error) {
+var b bytes.Buffer
+w, err := zstdpkg.NewWriter(&b)
+if err != nil {
+return nil, err
+}
+if _, err := w.Write(data); err != nil {
+w.Close()
+return nil, err
+}
+w.Close()
+return b.Bytes(), nil
+}
+
+
+func Decompress(data []byte) ([]byte, error) {
+	r, err := zstdpkg.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	var out bytes.Buffer
+	_, err = out.ReadFrom(r)
+	if err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+</file>
+
+<file path="docker-compose.yml">
+version: '3.8'
+
+services:
+  camera-collector:
+    build: .
+    container_name: camera-collector
+    restart: unless-stopped
+    volumes:
+      # Monta o config.yaml para facilitar a alteração sem reconstruir a imagem
+      - ./config.yaml:/app/config.yaml
+    depends_on:
+      - rabbitmq
+    # Opcional: descomente se precisar que a rede do host seja usada
+    # network_mode: "host"
+
+  rabbitmq:
+    image: "rabbitmq:3.13-management-alpine"
+    container_name: rabbitmq
+    ports:
+      # Porta para o protocolo AMQP
+      - "5672:5672"
+      # Porta para a interface de gerenciamento web
+      - "15672:15672"
+    volumes:
+      # Persiste os dados do RabbitMQ
+      - rabbitmq_data:/var/lib/rabbitmq/
+    environment:
+      - RABBITMQ_DEFAULT_USER=user
+      - RABBITMQ_DEFAULT_PASS=password
+      - RABBITMQ_DEFAULT_VHOST=guard_vhost
+
+volumes:
+  rabbitmq_data:
+</file>
+
+<file path="Dockerfile">
+# Stage 1: Build
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+
+# Copiar go.mod e go.sum e baixar dependências
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copiar o código fonte
+COPY . .
+
+# Construir a aplicação
+# O build para linux/amd64 é o padrão, mas podemos ser explícitos
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /camera-collector main.go
+
+# Stage 2: Final image
+FROM alpine:latest
+
+WORKDIR /app
+
+# Copiar o binário construído
+COPY --from=builder /camera-collector .
+
+# Copiar o arquivo de configuração
+COPY config.yaml .
+
+# Expor a porta se a aplicação tiver um servidor web (opcional)
+# EXPOSE 8080
+
+# Comando para iniciar a aplicação
+CMD ["./camera-collector"]
+</file>
+
+<file path="go.mod">
+module edge_guard_ai
+
+go 1.24.0
+
+toolchain go1.24.9
+
+require (
+	github.com/eclipse/paho.mqtt.golang v1.5.1
+	github.com/klauspost/compress v1.18.1
+	github.com/spf13/viper v1.21.0
+	github.com/streadway/amqp v1.1.0
+)
+
+require (
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
+	github.com/sagikazarmark/locafero v0.11.0 // indirect
+	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
+	github.com/spf13/afero v1.15.0 // indirect
+	github.com/spf13/cast v1.10.0 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/subosito/gotenv v1.6.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	golang.org/x/net v0.44.0 // indirect
+	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/sys v0.36.0 // indirect
+	golang.org/x/text v0.29.0 // indirect
+)
+</file>
+
+<file path="main.go">
+package main
+
+import (
+	"context"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"edge_guard_ai/internal/camera"
+	"edge_guard_ai/internal/mq"
+	"edge_guard_ai/internal/util"
+
+	"github.com/spf13/viper"
+)
+
+type CameraConfig struct {
+	ID  string `mapstructure:"id"`
+	URL string `mapstructure:"url"`
+}
+
+
+type Config struct {
+	IntervalMS          int `mapstructure:"interval_ms"`
+	ProcessEveryNFrames int `mapstructure:"process_every_n_frames"`
+	Protocol            string `mapstructure:"protocol"`
+	AMQP                struct {
+		AmqpURL          string `mapstructure:"amqp_url"`
+		Exchange         string `mapstructure:"exchange"`
+		RoutingKeyPrefix string `mapstructure:"routing_key_prefix"`
+	} `mapstructure:"amqp"`
+	MQTT struct {
+		Broker      string `mapstructure:"broker"`
+		TopicPrefix string `mapstructure:"topic_prefix"`
+	} `mapstructure:"mqtt"`
+	Compression struct {
+		Enabled bool `mapstructure:"enabled"`
+		Level   int  `mapstructure:"level"`
+	} `mapstructure:"compression"`
+	Cameras []CameraConfig `mapstructure:"cameras"`
+}
+
+
+func loadConfig() (*Config, error) {
+viper.SetConfigFile("config.yaml")
+if err := viper.ReadInConfig(); err != nil {
+return nil, err
+}
+var cfg Config
+if err := viper.Unmarshal(&cfg); err != nil {
+return nil, err
+}
+return &cfg, nil
+}
+
+
+func main() {
+cfg, err := loadConfig()
+if err != nil {
+log.Fatalf("erro ao carregar config: %v", err)
+}
+
+
+interval := time.Duration(cfg.IntervalMS) * time.Millisecond
+
+
+// cria publisher
+var publisher mq.Publisher
+if cfg.Protocol == "mqtt" {
+p, err := mq.NewMQTTPublisher(cfg.MQTT.Broker, cfg.MQTT.TopicPrefix)
+if err != nil {
+log.Fatalf("erro criar mqtt publisher: %v", err)
+}
+publisher = p
+} else {
+p, err := mq.NewAMQPPublisher(cfg.AMQP.AmqpURL, cfg.AMQP.Exchange, cfg.AMQP.RoutingKeyPrefix)
+if err != nil {
+log.Fatalf("erro criar amqp publisher: %v", err)
+}
+publisher = p
+}
+defer publisher.Close()
+
+
+// compressor
+var compressor *util.Compressor
+if cfg.Compression.Enabled {
+comp, err := util.NewCompressor(cfg.Compression.Level)
+if err != nil {
+log.Fatalf("erro criar compressor: %v", err)
+}
+compressor = comp
+}
+
+
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
+
+
+// start captures
+for _, camCfg := range cfg.Cameras {
+cap := camera.NewCapture(ctx, camera.CameraConfig{ID: camCfg.ID, URL: camCfg.URL}, interval, compressor, publisher)
+cap.Start()
+}
+
+
+// handle shutdown
+sig := make(chan os.Signal, 1)
+signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+<-sig
+log.Println("recebido sinal, finalizando...")
+cancel()
+// small wait to let goroutines finish
+time.Sleep(500 * time.Millisecond)
+}
+</file>
+
+<file path="config.yaml">
+interval_ms: 500
+protocol: amqp # amqp | mqtt
+
+process_every_n_frames: 3 # Processa 1 a cada 3 frames (ex: 30fps -> 10fps)
+
+amqp:
+  amqp_url: "amqp://user:password@rabbitmq:5672/guard_vhost"
+  exchange: "cameras"
+  routing_key_prefix: "camera."
+
+mqtt:
+  broker: "tcp://localhost:1883"
+  topic_prefix: "camera/"
+
+compression:
+  enabled: true
+  level: 3
+
+cameras:
+  - id: "cam1"
+    url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=1&subtype=0"
+  - id: "cam2"
+    url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=2&subtype=0"
+  - id: "cam3"
+    url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=3&subtype=0"
+  - id: "cam4"
+    url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=4&subtype=0"
+  - id: "cam5"
+    url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=5&subtype=0"
+</file>
+
+</files>

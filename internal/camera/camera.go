@@ -7,6 +7,8 @@ import (
 
 	"edge_guard_ai/internal/mq"
 	"edge_guard_ai/internal/util"
+	
+	"gocv.io/x/gocv"
 )
 
 type CameraConfig struct {
@@ -50,24 +52,29 @@ func (c *Capture) Start() {
 }
 
 func (c *Capture) captureAndPublish() {
-	// Simula a captura de um frame da camera
-	frameData := []byte("frame_data_from_" + c.config.ID)
-	log.Printf("capturado frame da camera %s", c.config.ID)
+	webcam, err := gocv.OpenVideoCapture(c.config.URL)
+	if err != nil {
+		log.Printf("erro ao abrir câmera %s: %v", c.config.ID, err)
+		return
+	}
+	defer webcam.Close()
 
-	var dataToPublish []byte
-	var err error
+	img := gocv.NewMat()
+	defer img.Close()
 
-	if c.compressor != nil {
-		dataToPublish, err = c.compressor.Compress(frameData)
-		if err != nil {
-			log.Printf("erro ao comprimir frame: %v", err)
-			return
-		}
-	} else {
-		dataToPublish = frameData
+	if ok := webcam.Read(&img); !ok || img.Empty() {
+		log.Printf("erro ao capturar frame da câmera %s", c.config.ID)
+		return
 	}
 
-	err = c.publisher.Publish(c.ctx, c.config.ID, dataToPublish)
+	buf, err := gocv.IMEncode(".jpg", img)
+	if err != nil {
+		log.Printf("erro ao codificar JPEG: %v", err)
+		return
+	}
+
+	// Publica na fila sem compressão
+	err = c.publisher.Publish(c.ctx, c.config.ID, buf)
 	if err != nil {
 		log.Printf("erro ao publicar frame: %v", err)
 	}

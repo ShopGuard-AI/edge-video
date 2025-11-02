@@ -9,6 +9,7 @@ require (
 	github.com/klauspost/compress v1.18.1
 	github.com/spf13/viper v1.21.0
 	github.com/streadway/amqp v1.1.0
+	gocv.io/x/gocv v0.39.0
 )
 
 require (
