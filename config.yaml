@@ -5,7 +5,7 @@ process_every_n_frames: 1 # Processa 1 a cada 1 frames (ex: 30fps -> 30fps)
 
 amqp:
   amqp_url: "amqp://user:password@rabbitmq:5672/guard_vhost"
-  exchange: "carnes_nobres"
+  exchange: "carnes_nobres_exchange"
   routing_key_prefix: "camera."
 
 mqtt:

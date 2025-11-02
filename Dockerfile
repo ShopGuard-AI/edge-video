@@ -27,8 +27,8 @@ WORKDIR /app
 # Copiar o binário construído
 COPY --from=builder /camera-collector .
 
-# Copiar o arquivo de configuração
-COPY config.yaml .
+# Nota: config.yaml será montado via volume no docker-compose.yml
+# Não é necessário copiá-lo para a imagem
 
 # Comando para iniciar a aplicação
 CMD ["./camera-collector"]
