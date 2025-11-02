@@ -27,7 +27,7 @@ func NewMQTTPublisher(broker, topicPrefix string) (*MQTTPublisher, error) {
 }
 
 func (p *MQTTPublisher) Publish(ctx context.Context, cameraID string, payload []byte) error {
-	topic := p.topicPrefix + "/" + cameraID
+	topic := p.topicPrefix + cameraID
 	token := p.client.Publish(topic, 1, false, payload)
 	sent := token.Wait()
 	if !sent {

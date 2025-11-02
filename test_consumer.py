@@ -9,7 +9,7 @@ RABBITMQ_PORT = 5672
 RABBITMQ_VHOST = 'guard_vhost'
 RABBITMQ_USER = 'user'
 RABBITMQ_PASS = 'password'
-EXCHANGE_NAME = 'carnes_nobres'
+EXCHANGE_NAME = 'carnes_nobres_exchange'
 ROUTING_KEY = 'camera.#'
 QUEUE_NAME = 'test_consumer_queue'
 

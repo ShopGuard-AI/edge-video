@@ -28,13 +28,13 @@ func NewAMQPPublisher(amqpURL, exchange, routingKeyPrefix string) (*AMQPPublishe
 	}
 
 	err = ch.ExchangeDeclare(
-		exchange, // name
-		"topic",  // type
-		true,     // durable
-		false,    // auto-deleted
-		false,    // internal
-		false,    // no-wait
-		nil,      // arguments
+		exchange,
+		"topic",
+		true,
+		false,
+		false,
+		false,
+		nil,
 	)
 	if err != nil {
 		ch.Close()
@@ -51,12 +51,12 @@ func NewAMQPPublisher(amqpURL, exchange, routingKeyPrefix string) (*AMQPPublishe
 }
 
 func (p *AMQPPublisher) Publish(ctx context.Context, cameraID string, payload []byte) error {
-	routingKey := p.routingKeyPrefix + "." + cameraID
+	routingKey := p.routingKeyPrefix + cameraID
 	err := p.channel.Publish(
-		p.exchange,   // exchange
-		routingKey,   // routing key
-		false,        // mandatory
-		false,        // immediate
+		p.exchange,
+		routingKey,
+		false,
+		false,
 		amqp.Publishing{
 			ContentType: "application/octet-stream",
 			Body:        payload,

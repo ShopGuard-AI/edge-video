@@ -14,7 +14,7 @@ RUN go mod download
 RUN go mod tidy
 
 # Construir a aplicação sem CGO
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /camera-collector main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /camera-collector ./cmd/edge-video
 
 # Stage 2: Final image
 FROM alpine:latest

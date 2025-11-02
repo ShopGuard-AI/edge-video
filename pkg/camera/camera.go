@@ -7,24 +7,24 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/T3-Labs/edge-video/internal/mq"
-	"github.com/T3-Labs/edge-video/internal/util"
+	"github.com/T3-Labs/edge-video/pkg/mq"
+	"github.com/T3-Labs/edge-video/pkg/util"
 )
 
-type CameraConfig struct {
+type Config struct {
 	ID  string
 	URL string
 }
 
 type Capture struct {
 	ctx        context.Context
-	config     CameraConfig
+	config     Config
 	interval   time.Duration
 	compressor *util.Compressor
 	publisher  mq.Publisher
 }
 
-func NewCapture(ctx context.Context, config CameraConfig, interval time.Duration, compressor *util.Compressor, publisher mq.Publisher) *Capture {
+func NewCapture(ctx context.Context, config Config, interval time.Duration, compressor *util.Compressor, publisher mq.Publisher) *Capture {
 	return &Capture{
 		ctx:        ctx,
 		config:     config,
@@ -52,8 +52,6 @@ func (c *Capture) Start() {
 }
 
 func (c *Capture) captureAndPublish() {
-	// Captura um frame da câmera RTSP usando FFmpeg
-	// Comando: ffmpeg -rtsp_transport tcp -i <URL> -frames:v 1 -f image2pipe -vcodec mjpeg -
 	cmd := exec.CommandContext(
 		c.ctx,
 		"ffmpeg",
@@ -84,7 +82,6 @@ func (c *Capture) captureAndPublish() {
 
 	log.Printf("capturado frame da camera %s (%d bytes)", c.config.ID, len(frameData))
 
-	// Publica o frame JPEG no RabbitMQ
 	err = c.publisher.Publish(c.ctx, c.config.ID, frameData)
 	if err != nil {
 		log.Printf("erro ao publicar frame da câmera %s: %v", c.config.ID, err)
