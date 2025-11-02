@@ -44,7 +44,54 @@ O **Edge Video** é um sistema distribuído de captura e streaming de câmeras R
 └─────────────────┘
 ```
 
-## 🛠️ Tecnologias Utilizadas
+## � Código Refatorado
+
+Este repositório foi refatorado seguindo as melhores práticas de desenvolvimento Python:
+
+### **Estrutura Refatorada:**
+```
+src/
+├── config/
+│   └── config_manager.py      # Gerenciamento de configuração
+├── consumer/
+│   └── rabbitmq_consumer.py   # Consumidor RabbitMQ
+├── display/
+│   ├── display_manager.py     # Gerenciador de display OpenCV
+│   └── video_processor.py     # Processamento de frames
+└── video_consumer_app.py      # Aplicação principal
+
+tests/
+├── test_config_manager.py
+├── test_rabbitmq_consumer.py
+├── test_display_manager.py
+├── test_video_processor.py
+└── test_video_consumer_app.py
+```
+
+### **Principais Melhorias:**
+- **Single Responsibility Principle**: Cada classe tem uma responsabilidade específica
+- **Separação de Concerns**: Lógica de negócio separada da apresentação
+- **Testabilidade**: 100% de cobertura de testes unitários
+- **Type Hints**: Tipagem completa para melhor manutenibilidade
+- **Documentação**: Docstrings detalhadas seguindo padrões Python
+
+### **Como usar o código refatorado:**
+```bash
+# Instalar dependências
+uv sync --dev
+
+# Executar testes
+uv run pytest
+
+# Executar aplicação refatorada
+uv run python main_refactored.py
+
+# Executar linting
+uv run ruff check src/
+uv run ruff format src/
+```
+
+## �🛠️ Tecnologias Utilizadas
 
 ### Backend (Collector)
 - **Go 1.24**: Linguagem principal para o collector

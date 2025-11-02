@@ -40,6 +40,9 @@ The content is organized as follows:
 </file_summary>
 
 <directory_structure>
+.github/
+  workflows/
+    build-and-push.yml
 internal/
   camera/
     camera.go
@@ -49,222 +52,2824 @@ internal/
     publisher.go
   util/
     compress.go
+src/
+  config/
+    config_manager.py
+  consumer/
+    rabbitmq_consumer.py
+  display/
+    display_manager.py
+    video_processor.py
+  video_consumer_app.py
+tests/
+  test_config_manager.py
+  test_display_manager.py
+  test_rabbitmq_consumer.py
+  test_video_consumer_app.py
+  test_video_processor.py
+.dockerignore
+.env.example
+.gitignore
 .python-version
 config.yaml
 docker-compose.yml
 Dockerfile
 go.mod
+main_refactored.py
 main.go
+Makefile
 pyproject.toml
+run-docker.sh
+setup-dev.sh
 test_consumer.py
 </directory_structure>
 
 <files>
 This section contains the contents of the repository's files.
 
-<file path=".python-version">
-3.11
+<file path="src/config/config_manager.py">
+from dataclasses import dataclass
+from typing import Dict, Any
+
+
+@dataclass
+class RabbitMQConfig:
+    """
+    Configuration class for RabbitMQ connection parameters.
+    """
+    
+    host: str
+    port: int
+    virtual_host: str
+    username: str
+    password: str
+    exchange_name: str
+    routing_key: str
+    queue_name: str
+
+
+class ConfigManager:
+    """
+    A class to manage application configuration settings.
+    """
+
+    def __init__(self, config_data: Dict[str, Any] = None) -> None:
+        """
+        Initializes the configuration manager with provided data.
+
+        Args:
+            config_data (Dict[str, Any], optional): Configuration data dictionary.
+        """
+        self.config_data = config_data or self._get_default_config()
+
+    def _get_default_config(self) -> Dict[str, Any]:
+        """
+        Returns the default configuration values.
+
+        Returns:
+            Dict[str, Any]: Default configuration dictionary.
+        """
+        return {
+            'rabbitmq_host': 'localhost',
+            'rabbitmq_port': 5672,
+            'rabbitmq_vhost': 'guard_vhost',
+            'rabbitmq_user': 'user',
+            'rabbitmq_pass': 'password',
+            'exchange_name': 'carnes_nobres',
+            'routing_key': 'camera.#',
+            'queue_name': 'test_consumer_queue'
+        }
+
+    def get_rabbitmq_config(self) -> RabbitMQConfig:
+        """
+        Creates and returns a RabbitMQ configuration object.
+
+        Returns:
+            RabbitMQConfig: Configured RabbitMQ parameters.
+        """
+        return RabbitMQConfig(
+            host=self.config_data.get('rabbitmq_host'),
+            port=self.config_data.get('rabbitmq_port'),
+            virtual_host=self.config_data.get('rabbitmq_vhost'),
+            username=self.config_data.get('rabbitmq_user'),
+            password=self.config_data.get('rabbitmq_pass'),
+            exchange_name=self.config_data.get('exchange_name'),
+            routing_key=self.config_data.get('routing_key'),
+            queue_name=self.config_data.get('queue_name')
+        )
+
+    def get_config_value(self, key: str, default_value: Any = None) -> Any:
+        """
+        Retrieves a configuration value by key.
+
+        Args:
+            key (str): The configuration key to retrieve.
+            default_value (Any, optional): Default value if key not found.
+
+        Returns:
+            Any: The configuration value.
+        """
+        return self.config_data.get(key, default_value)
+
+    def update_config(self, key: str, value: Any) -> None:
+        """
+        Updates a configuration value.
+
+        Args:
+            key (str): The configuration key to update.
+            value (Any): The new value to set.
+        """
+        self.config_data[key] = value
 </file>
 
-<file path="pyproject.toml">
-[project]
-name = "edge-guard-ai"
-version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-requires-python = ">=3.11"
-dependencies = [
-    "opencv-python>=4.12.0.88",
-    "pika>=1.3.2",
-    "zstandard>=0.25.0",
-]
-</file>
-
-<file path="test_consumer.py">
+<file path="src/consumer/rabbitmq_consumer.py">
 import pika
 import sys
-import os
-import cv2
-import numpy as np
-import zstandard as zstd
+from typing import Callable, Optional
+from ..config.config_manager import RabbitMQConfig
 
-# --- Configurações ---
-# Estas configurações devem corresponder ao seu docker-compose.yml e config.yaml
-RABBITMQ_HOST = 'localhost'
-RABBITMQ_PORT = 5672
-RABBITMQ_VHOST = 'guard_vhost'
-RABBITMQ_USER = 'user'
-RABBITMQ_PASS = 'password'
-EXCHANGE_NAME = 'cameras'
-# Usamos '#' como routing key para receber todas as mensagens do exchange
-ROUTING_KEY = 'camera.#' 
-QUEUE_NAME = 'test_consumer_queue'
 
-camera_windows = {}
-
-def on_message_received(ch, method, properties, body):
+class RabbitMQConsumer:
     """
-    Callback executado sempre que uma mensagem é recebida.
-    Exibe o frame em uma janela do OpenCV identificada pela câmera.
+    A class to handle RabbitMQ connection and message consumption.
     """
-    camera_id = method.routing_key
-    print(f" [x] Recebido frame da câmera '{camera_id}'. Tamanho: {len(body)} bytes")
 
-    # Descomprime os dados usando zstd
-    try:
-        dctx = zstd.ZstdDecompressor()
-        decompressed = dctx.decompress(body)
-    except Exception as e:
-        print(f" [!] Erro ao descomprimir dados da câmera '{camera_id}': {e}")
-        return
+    def __init__(self, config: RabbitMQConfig) -> None:
+        """
+        Initializes the RabbitMQ consumer with configuration.
 
-    # Tenta decodificar o frame como imagem (JPEG/PNG)
-    try:
-        np_arr = np.frombuffer(decompressed, np.uint8)
-        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        if img is not None:
-            cv2.imshow(camera_id, img)
-            camera_windows[camera_id] = True
-        else:
-            print(f" [!] Não foi possível decodificar o frame da câmera '{camera_id}'.")
-    except Exception as e:
-        print(f" [!] Erro ao decodificar imagem da câmera '{camera_id}': {e}")
+        Args:
+            config (RabbitMQConfig): RabbitMQ connection configuration.
+        """
+        self.config = config
+        self.connection: Optional[pika.BlockingConnection] = None
+        self.channel: Optional[pika.channel.Channel] = None
+        self.queue_name: Optional[str] = None
+        self.message_callback: Optional[Callable] = None
 
-def main():
-    """
-    Função principal que estabelece a conexão e começa a consumir.
-    """
-    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
-    parameters = pika.ConnectionParameters(
-        host=RABBITMQ_HOST,
-        port=RABBITMQ_PORT,
-        virtual_host=RABBITMQ_VHOST,
-        credentials=credentials
-    )
+    def connect(self) -> bool:
+        """
+        Establishes connection to RabbitMQ server.
 
-    try:
-        connection = pika.BlockingConnection(parameters)
-        channel = connection.channel()
+        Returns:
+            bool: True if connection successful, False otherwise.
+        """
+        try:
+            credentials = pika.PlainCredentials(self.config.username, self.config.password)
+            connection_parameters = pika.ConnectionParameters(
+                host=self.config.host,
+                port=self.config.port,
+                virtual_host=self.config.virtual_host,
+                credentials=credentials
+            )
+            
+            self.connection = pika.BlockingConnection(connection_parameters)
+            self.channel = self.connection.channel()
+            
+            self.channel.exchange_declare(
+                exchange=self.config.exchange_name, 
+                exchange_type='topic', 
+                durable=True
+            )
+            
+            queue_result = self.channel.queue_declare(
+                queue=self.config.queue_name, 
+                exclusive=True, 
+                durable=False
+            )
+            self.queue_name = queue_result.method.queue
+            
+            self.channel.queue_bind(
+                exchange=self.config.exchange_name,
+                queue=self.queue_name,
+                routing_key=self.config.routing_key
+            )
+            
+            return True
+            
+        except pika.exceptions.AMQPConnectionError as connection_error:
+            print(f"RabbitMQ connection error: {connection_error}")
+            return False
+        except Exception as general_error:
+            print(f"Unexpected error during connection: {general_error}")
+            return False
 
-        # Declara o exchange, garantindo que ele existe
-        channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type='topic', durable=True)
+    def set_message_callback(self, callback: Callable) -> None:
+        """
+        Sets the callback function for message processing.
 
-        # Declara uma fila exclusiva e não durável para este consumidor
-        # exclusive=True significa que a fila será deletada quando a conexão for fechada
-        result = channel.queue_declare(queue=QUEUE_NAME, exclusive=True, durable=False)
-        queue_name = result.method.queue
+        Args:
+            callback (Callable): Function to call when message is received.
+        """
+        self.message_callback = callback
 
-        print(f"[*] Fila '{queue_name}' criada. Aguardando por frames...")
+    def start_consuming(self) -> None:
+        """
+        Starts consuming messages from the queue.
+        """
+        if not self.channel or not self.queue_name or not self.message_callback:
+            raise RuntimeError("Consumer not properly configured. Ensure connection, queue, and callback are set.")
         
-        # Vincula a fila ao exchange com a routing key
-        channel.queue_bind(exchange=EXCHANGE_NAME, queue=queue_name, routing_key=ROUTING_KEY)
+        self.channel.basic_consume(
+            queue=self.queue_name,
+            on_message_callback=self._on_message_received,
+            auto_ack=True
+        )
+        
+        print(f"[*] Queue '{self.queue_name}' created. Waiting for frames...")
 
-        # Define a função de callback para consumir mensagens da fila
-        channel.basic_consume(queue=queue_name, on_message_callback=on_message_received, auto_ack=True)
+    def _on_message_received(self, channel, method, properties, body) -> None:
+        """
+        Internal callback method for processing received messages.
 
-        print("[INFO] Pressione 'q' em qualquer janela para sair.")
-        # Loop principal para processar eventos do OpenCV
-        while True:
-            try:
-                channel.connection.process_data_events(time_limit=0.1)
-                # Verifica se alguma janela foi fechada com 'q'
-                if any([cv2.waitKey(1) & 0xFF == ord('q') for _ in camera_windows]):
-                    print("Saindo por comando do usuário.")
-                    break
-            except KeyboardInterrupt:
-                print('Interrompido pelo usuário. Encerrando.')
-                break
-        cv2.destroyAllWindows()
+        Args:
+            channel: RabbitMQ channel object.
+            method: Method frame with routing key information.
+            properties: Message properties.
+            body: Message body content.
+        """
+        camera_id = method.routing_key.replace('camera.', '')
+        print(f" [x] Received frame from camera '{camera_id}'. Size: {len(body)} bytes")
+        
+        if self.message_callback:
+            self.message_callback(camera_id, body)
 
-    except pika.exceptions.AMQPConnectionError as e:
-        print(f"Erro de conexão com o RabbitMQ: {e}")
-        print("Verifique se o host, porta, vhost e credenciais estão corretos e se o contêiner do RabbitMQ está em execução.")
-    except KeyboardInterrupt:
-        print('Interrompido pelo usuário. Encerrando.')
+    def process_data_events(self, time_limit_seconds: float = 0.1) -> None:
+        """
+        Processes data events for non-blocking consumption.
+
+        Args:
+            time_limit_seconds (float): Time limit for processing events.
+        """
+        if self.connection:
+            self.connection.process_data_events(time_limit=time_limit_seconds)
+
+    def is_connected(self) -> bool:
+        """
+        Checks if the connection is active.
+
+        Returns:
+            bool: True if connected, False otherwise.
+        """
+        return self.connection is not None and not self.connection.is_closed
+
+    def disconnect(self) -> None:
+        """
+        Closes the RabbitMQ connection and cleanup resources.
+        """
+        try:
+            if self.connection and not self.connection.is_closed:
+                self.connection.close()
+        except Exception as close_error:
+            print(f"Error closing connection: {close_error}")
+        finally:
+            self.connection = None
+            self.channel = None
+            self.queue_name = None
+
+    def handle_keyboard_interrupt(self) -> None:
+        """
+        Handles keyboard interrupt gracefully.
+        """
+        print('Interrupted by user. Shutting down.')
+        self.disconnect()
         try:
             sys.exit(0)
         except SystemExit:
+            import os
             os._exit(0)
+</file>
+
+<file path="src/display/display_manager.py">
+import cv2
+import numpy as np
+from typing import Dict
+
+
+class VideoDisplayManager:
+    """
+    A class to manage video display operations using OpenCV.
+    """
+
+    def __init__(self, window_title: str = "Cameras Grid (2x3)") -> None:
+        """
+        Initializes the video display manager.
+
+        Args:
+            window_title (str): Title for the display window.
+        """
+        self.window_title = window_title
+        self.is_window_open = False
+        self.camera_frames: Dict[str, np.ndarray] = {}
+
+    def update_camera_frame(self, camera_id: str, frame: np.ndarray) -> None:
+        """
+        Updates the frame for a specific camera.
+
+        Args:
+            camera_id (str): Identifier for the camera.
+            frame (np.ndarray): New frame data.
+        """
+        if frame is not None:
+            self.camera_frames[camera_id] = frame
+
+    def display_grid(self, grid_image: np.ndarray) -> None:
+        """
+        Displays the grid image in the OpenCV window.
+
+        Args:
+            grid_image (np.ndarray): Grid image to display.
+        """
+        cv2.imshow(self.window_title, grid_image)
+        if not self.is_window_open:
+            self.is_window_open = True
+
+    def check_exit_key(self, wait_time_ms: int = 1) -> bool:
+        """
+        Checks if the exit key ('q') has been pressed.
+
+        Args:
+            wait_time_ms (int): Time to wait for key press in milliseconds.
+
+        Returns:
+            bool: True if exit key was pressed, False otherwise.
+        """
+        key_pressed = cv2.waitKey(wait_time_ms) & 0xFF
+        return key_pressed == ord('q')
+
+    def has_camera_frames(self) -> bool:
+        """
+        Checks if there are any camera frames available.
+
+        Returns:
+            bool: True if camera frames exist, False otherwise.
+        """
+        return len(self.camera_frames) > 0
+
+    def get_camera_frames(self) -> Dict[str, np.ndarray]:
+        """
+        Returns the current camera frames.
+
+        Returns:
+            Dict[str, np.ndarray]: Dictionary of camera frames.
+        """
+        return self.camera_frames.copy()
+
+    def clear_camera_frames(self) -> None:
+        """
+        Clears all stored camera frames.
+        """
+        self.camera_frames.clear()
+
+    def close_windows(self) -> None:
+        """
+        Closes all OpenCV windows and cleanup resources.
+        """
+        cv2.destroyAllWindows()
+        self.is_window_open = False
+
+    def get_window_status(self) -> bool:
+        """
+        Returns the current window open status.
+
+        Returns:
+            bool: True if window is open, False otherwise.
+        """
+        return self.is_window_open
+</file>
+
+<file path="src/display/video_processor.py">
+import cv2
+import numpy as np
+from typing import Dict, List, Optional
+
+
+class VideoFrameProcessor:
+    """
+    A class to handle video frame processing operations.
+    """
+
+    def __init__(self, grid_width: int = 3, grid_height: int = 2) -> None:
+        """
+        Initializes the video frame processor.
+
+        Args:
+            grid_width (int): Number of cameras per row in the grid.
+            grid_height (int): Number of rows in the grid.
+        """
+        self.grid_width = grid_width
+        self.grid_height = grid_height
+        self.max_cameras = grid_width * grid_height
+        self.frame_width = 640
+        self.frame_height = 480
+
+    def decode_frame(self, frame_data: bytes) -> Optional[np.ndarray]:
+        """
+        Decodes frame data from bytes to OpenCV image format.
+
+        Args:
+            frame_data (bytes): Raw frame data in JPEG/PNG format.
+
+        Returns:
+            Optional[np.ndarray]: Decoded image or None if decoding fails.
+        """
+        try:
+            numpy_array = np.frombuffer(frame_data, np.uint8)
+            image = cv2.imdecode(numpy_array, cv2.IMREAD_COLOR)
+            return image
+        except Exception as exception_error:
+            print(f"Error decoding frame: {exception_error}")
+            return None
+
+    def resize_frame(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Resizes frame to standard dimensions for grid display.
+
+        Args:
+            frame (np.ndarray): Input frame to resize.
+
+        Returns:
+            np.ndarray: Resized frame.
+        """
+        return cv2.resize(frame, (self.frame_width, self.frame_height))
+
+    def add_camera_label(self, frame: np.ndarray, camera_id: str) -> np.ndarray:
+        """
+        Adds camera ID label to the frame.
+
+        Args:
+            frame (np.ndarray): Input frame to label.
+            camera_id (str): Camera identifier to display.
+
+        Returns:
+            np.ndarray: Frame with added label.
+        """
+        labeled_frame = frame.copy()
+        cv2.putText(
+            labeled_frame, 
+            camera_id, 
+            (10, 30), 
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1, 
+            (0, 255, 0), 
+            2, 
+            cv2.LINE_AA
+        )
+        return labeled_frame
+
+    def create_placeholder_frame(self, camera_number: int) -> np.ndarray:
+        """
+        Creates a black placeholder frame for inactive cameras.
+
+        Args:
+            camera_number (int): Camera number to display on placeholder.
+
+        Returns:
+            np.ndarray: Black frame with camera number.
+        """
+        placeholder_frame = np.zeros((self.frame_height, self.frame_width, 3), dtype=np.uint8)
+        camera_text = f"Cam{camera_number}"
+        cv2.putText(
+            placeholder_frame, 
+            camera_text, 
+            (250, 240), 
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1, 
+            (255, 255, 255), 
+            2, 
+            cv2.LINE_AA
+        )
+        return placeholder_frame
+
+    def process_frames_for_grid(self, camera_frames: Dict[str, np.ndarray]) -> List[np.ndarray]:
+        """
+        Processes camera frames for grid display.
+
+        Args:
+            camera_frames (Dict[str, np.ndarray]): Dictionary of camera frames.
+
+        Returns:
+            List[np.ndarray]: List of processed frames ready for grid display.
+        """
+        processed_frames = []
+        camera_ids = sorted(camera_frames.keys())
+        
+        for camera_index in range(self.max_cameras):
+            if camera_index < len(camera_ids):
+                camera_id = camera_ids[camera_index]
+                frame = camera_frames[camera_id]
+                resized_frame = self.resize_frame(frame)
+                labeled_frame = self.add_camera_label(resized_frame, camera_id)
+                processed_frames.append(labeled_frame)
+            else:
+                placeholder_frame = self.create_placeholder_frame(camera_index + 1)
+                processed_frames.append(placeholder_frame)
+        
+        return processed_frames
+
+    def create_grid_display(self, processed_frames: List[np.ndarray]) -> np.ndarray:
+        """
+        Creates a grid display from processed frames.
+
+        Args:
+            processed_frames (List[np.ndarray]): List of processed frames.
+
+        Returns:
+            np.ndarray: Combined grid display.
+        """
+        if len(processed_frames) != self.max_cameras:
+            raise ValueError(f"Expected {self.max_cameras} frames, got {len(processed_frames)}")
+        
+        grid_rows = []
+        for row_index in range(self.grid_height):
+            start_index = row_index * self.grid_width
+            end_index = start_index + self.grid_width
+            row_frames = processed_frames[start_index:end_index]
+            grid_row = np.hstack(row_frames)
+            grid_rows.append(grid_row)
+        
+        return np.vstack(grid_rows)
+</file>
+
+<file path="src/video_consumer_app.py">
+import time
+from typing import Optional
+from .config.config_manager import ConfigManager, RabbitMQConfig
+from .consumer.rabbitmq_consumer import RabbitMQConsumer  
+from .display.video_processor import VideoFrameProcessor
+from .display.display_manager import VideoDisplayManager
+
+
+class VideoConsumerApplication:
+    """
+    Main application class that orchestrates video consumption and display.
+    """
+
+    def __init__(self, config_manager: ConfigManager) -> None:
+        """
+        Initializes the video consumer application.
+
+        Args:
+            config_manager (ConfigManager): Configuration manager instance.
+        """
+        self.config_manager = config_manager
+        self.rabbitmq_config = config_manager.get_rabbitmq_config()
+        
+        self.consumer = RabbitMQConsumer(self.rabbitmq_config)
+        self.video_processor = VideoFrameProcessor()
+        self.display_manager = VideoDisplayManager()
+        
+        self.consumer.set_message_callback(self._handle_frame_message)
+        self.is_running = False
+
+    def _handle_frame_message(self, camera_id: str, frame_data: bytes) -> None:
+        """
+        Handles incoming frame messages from RabbitMQ.
+
+        Args:
+            camera_id (str): Identifier of the camera.
+            frame_data (bytes): Raw frame data.
+        """
+        decoded_frame = self.video_processor.decode_frame(frame_data)
+        if decoded_frame is not None:
+            self.display_manager.update_camera_frame(camera_id, decoded_frame)
+        else:
+            print(f"Failed to decode frame from camera '{camera_id}'.")
+
+    def start(self) -> bool:
+        """
+        Starts the video consumer application.
+
+        Returns:
+            bool: True if started successfully, False otherwise.
+        """
+        if not self.consumer.connect():
+            print("Failed to connect to RabbitMQ. Check configuration and server status.")
+            return False
+        
+        self.consumer.start_consuming()
+        self.is_running = True
+        print("[INFO] Press 'q' in any window to exit.")
+        
+        return True
+
+    def run_main_loop(self) -> None:
+        """
+        Runs the main application loop for processing and display.
+        """
+        try:
+            while self.is_running:
+                self.consumer.process_data_events(time_limit_seconds=0.1)
+                
+                if self.display_manager.has_camera_frames():
+                    self._update_display()
+                
+                if self.display_manager.check_exit_key():
+                    print("Exiting by user command.")
+                    self.stop()
+                    break
+                    
+        except KeyboardInterrupt:
+            self.consumer.handle_keyboard_interrupt()
+            self.stop()
+
+    def _update_display(self) -> None:
+        """
+        Updates the video display with current frames.
+        """
+        camera_frames = self.display_manager.get_camera_frames()
+        processed_frames = self.video_processor.process_frames_for_grid(camera_frames)
+        grid_display = self.video_processor.create_grid_display(processed_frames)
+        self.display_manager.display_grid(grid_display)
+
+    def stop(self) -> None:
+        """
+        Stops the application and cleanup resources.
+        """
+        self.is_running = False
+        self.display_manager.close_windows()
+        self.consumer.disconnect()
+
+    def get_running_status(self) -> bool:
+        """
+        Returns the current running status.
+
+        Returns:
+            bool: True if running, False otherwise.
+        """
+        return self.is_running
+</file>
+
+<file path="tests/test_config_manager.py">
+import pytest
+from src.config.config_manager import ConfigManager, RabbitMQConfig
+
+
+class TestConfigManager:
+    """
+    Test class for ConfigManager functionality.
+    """
+
+    def test_config_manager_initialization_with_default_config(self):
+        """
+        Test ConfigManager initialization with default configuration.
+        """
+        config_manager = ConfigManager()
+        
+        assert config_manager.config_data is not None
+        assert config_manager.config_data['rabbitmq_host'] == 'localhost'
+        assert config_manager.config_data['rabbitmq_port'] == 5672
+
+    def test_config_manager_initialization_with_custom_config(self):
+        """
+        Test ConfigManager initialization with custom configuration.
+        """
+        custom_config = {'rabbitmq_host': 'custom-host', 'rabbitmq_port': 5673}
+        config_manager = ConfigManager(custom_config)
+        
+        assert config_manager.config_data['rabbitmq_host'] == 'custom-host'
+        assert config_manager.config_data['rabbitmq_port'] == 5673
+
+    def test_get_rabbitmq_config_returns_correct_object(self):
+        """
+        Test that get_rabbitmq_config returns a properly configured RabbitMQConfig object.
+        """
+        config_manager = ConfigManager()
+        rabbitmq_config = config_manager.get_rabbitmq_config()
+        
+        assert isinstance(rabbitmq_config, RabbitMQConfig)
+        assert rabbitmq_config.host == 'localhost'
+        assert rabbitmq_config.port == 5672
+        assert rabbitmq_config.virtual_host == 'guard_vhost'
+        assert rabbitmq_config.username == 'user'
+        assert rabbitmq_config.password == 'password'
+
+    def test_get_config_value_with_existing_key(self):
+        """
+        Test getting a configuration value that exists.
+        """
+        config_manager = ConfigManager()
+        host_value = config_manager.get_config_value('rabbitmq_host')
+        
+        assert host_value == 'localhost'
+
+    def test_get_config_value_with_non_existing_key(self):
+        """
+        Test getting a configuration value that doesn't exist returns None.
+        """
+        config_manager = ConfigManager()
+        non_existing_value = config_manager.get_config_value('non_existing_key')
+        
+        assert non_existing_value is None
+
+    def test_get_config_value_with_default_value(self):
+        """
+        Test getting a configuration value with a default value.
+        """
+        config_manager = ConfigManager()
+        default_value = config_manager.get_config_value('non_existing_key', 'default')
+        
+        assert default_value == 'default'
+
+    def test_update_config_updates_value(self):
+        """
+        Test updating a configuration value.
+        """
+        config_manager = ConfigManager()
+        config_manager.update_config('rabbitmq_host', 'new-host')
+        
+        assert config_manager.config_data['rabbitmq_host'] == 'new-host'
+
+    def test_update_config_adds_new_key(self):
+        """
+        Test updating configuration with a new key.
+        """
+        config_manager = ConfigManager()
+        config_manager.update_config('new_key', 'new_value')
+        
+        assert config_manager.config_data['new_key'] == 'new_value'
+
+
+class TestRabbitMQConfig:
+    """
+    Test class for RabbitMQConfig dataclass.
+    """
+
+    def test_rabbitmq_config_initialization(self):
+        """
+        Test RabbitMQConfig initialization with all parameters.
+        """
+        config = RabbitMQConfig(
+            host='localhost',
+            port=5672,
+            virtual_host='test_vhost',
+            username='test_user',
+            password='test_pass',
+            exchange_name='test_exchange',
+            routing_key='test.#',
+            queue_name='test_queue'
+        )
+        
+        assert config.host == 'localhost'
+        assert config.port == 5672
+        assert config.virtual_host == 'test_vhost'
+        assert config.username == 'test_user'
+        assert config.password == 'test_pass'
+        assert config.exchange_name == 'test_exchange'
+        assert config.routing_key == 'test.#'
+        assert config.queue_name == 'test_queue'
+</file>
+
+<file path="tests/test_display_manager.py">
+import pytest
+import numpy as np
+from unittest.mock import patch, Mock
+from src.display.display_manager import VideoDisplayManager
+
+
+class TestVideoDisplayManager:
+    """
+    Test class for VideoDisplayManager functionality.
+    """
+
+    def setup_method(self):
+        """
+        Setup method called before each test.
+        """
+        self.display_manager = VideoDisplayManager()
+
+    def test_video_display_manager_initialization_with_default_title(self):
+        """
+        Test VideoDisplayManager initialization with default window title.
+        """
+        assert self.display_manager.window_title == "Cameras Grid (2x3)"
+        assert self.display_manager.is_window_open is False
+        assert len(self.display_manager.camera_frames) == 0
+
+    def test_video_display_manager_initialization_with_custom_title(self):
+        """
+        Test VideoDisplayManager initialization with custom window title.
+        """
+        custom_manager = VideoDisplayManager("Custom Window Title")
+        
+        assert custom_manager.window_title == "Custom Window Title"
+        assert custom_manager.is_window_open is False
+
+    def test_update_camera_frame_with_valid_frame(self):
+        """
+        Test updating camera frame with valid frame data.
+        """
+        camera_id = "cam1"
+        test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        
+        self.display_manager.update_camera_frame(camera_id, test_frame)
+        
+        assert camera_id in self.display_manager.camera_frames
+        assert np.array_equal(self.display_manager.camera_frames[camera_id], test_frame)
+
+    def test_update_camera_frame_with_none_frame(self):
+        """
+        Test updating camera frame with None frame data doesn't store it.
+        """
+        camera_id = "cam1"
+        initial_count = len(self.display_manager.camera_frames)
+        
+        self.display_manager.update_camera_frame(camera_id, None)
+        
+        assert len(self.display_manager.camera_frames) == initial_count
+        assert camera_id not in self.display_manager.camera_frames
+
+    @patch('cv2.imshow')
+    def test_display_grid(self, mock_imshow):
+        """
+        Test displaying grid image.
+        """
+        grid_image = np.zeros((960, 1920, 3), dtype=np.uint8)
+        
+        self.display_manager.display_grid(grid_image)
+        
+        mock_imshow.assert_called_once_with(self.display_manager.window_title, grid_image)
+        assert self.display_manager.is_window_open is True
+
+    @patch('cv2.waitKey')
+    def test_check_exit_key_with_q_pressed(self, mock_waitKey):
+        """
+        Test check_exit_key returns True when 'q' is pressed.
+        """
+        mock_waitKey.return_value = ord('q')
+        
+        result = self.display_manager.check_exit_key()
+        
+        mock_waitKey.assert_called_once_with(1)
+        assert result is True
+
+    @patch('cv2.waitKey')
+    def test_check_exit_key_with_other_key_pressed(self, mock_waitKey):
+        """
+        Test check_exit_key returns False when other key is pressed.
+        """
+        mock_waitKey.return_value = ord('a')
+        
+        result = self.display_manager.check_exit_key()
+        
+        mock_waitKey.assert_called_once_with(1)
+        assert result is False
+
+    @patch('cv2.waitKey')
+    def test_check_exit_key_with_custom_wait_time(self, mock_waitKey):
+        """
+        Test check_exit_key with custom wait time.
+        """
+        mock_waitKey.return_value = ord('a')
+        
+        self.display_manager.check_exit_key(wait_time_ms=5)
+        
+        mock_waitKey.assert_called_once_with(5)
+
+    def test_has_camera_frames_when_empty(self):
+        """
+        Test has_camera_frames returns False when no frames exist.
+        """
+        result = self.display_manager.has_camera_frames()
+        
+        assert result is False
+
+    def test_has_camera_frames_when_frames_exist(self):
+        """
+        Test has_camera_frames returns True when frames exist.
+        """
+        test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        self.display_manager.update_camera_frame("cam1", test_frame)
+        
+        result = self.display_manager.has_camera_frames()
+        
+        assert result is True
+
+    def test_get_camera_frames_returns_copy(self):
+        """
+        Test get_camera_frames returns a copy of camera frames.
+        """
+        test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        self.display_manager.update_camera_frame("cam1", test_frame)
+        
+        frames_copy = self.display_manager.get_camera_frames()
+        
+        assert frames_copy is not self.display_manager.camera_frames
+        assert "cam1" in frames_copy
+        assert np.array_equal(frames_copy["cam1"], test_frame)
+
+    def test_clear_camera_frames(self):
+        """
+        Test clearing all camera frames.
+        """
+        test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        self.display_manager.update_camera_frame("cam1", test_frame)
+        
+        self.display_manager.clear_camera_frames()
+        
+        assert len(self.display_manager.camera_frames) == 0
+
+    @patch('cv2.destroyAllWindows')
+    def test_close_windows(self, mock_destroyAllWindows):
+        """
+        Test closing windows and cleanup.
+        """
+        self.display_manager.is_window_open = True
+        
+        self.display_manager.close_windows()
+        
+        mock_destroyAllWindows.assert_called_once()
+        assert self.display_manager.is_window_open is False
+
+    def test_get_window_status_when_closed(self):
+        """
+        Test get_window_status returns False when window is closed.
+        """
+        result = self.display_manager.get_window_status()
+        
+        assert result is False
+
+    def test_get_window_status_when_open(self):
+        """
+        Test get_window_status returns True when window is open.
+        """
+        self.display_manager.is_window_open = True
+        
+        result = self.display_manager.get_window_status()
+        
+        assert result is True
+</file>
+
+<file path="tests/test_rabbitmq_consumer.py">
+import pytest
+from unittest.mock import patch, Mock, MagicMock
+from src.consumer.rabbitmq_consumer import RabbitMQConsumer
+from src.config.config_manager import RabbitMQConfig
+
+
+class TestRabbitMQConsumer:
+    """
+    Test class for RabbitMQConsumer functionality.
+    """
+
+    def setup_method(self):
+        """
+        Setup method called before each test.
+        """
+        self.config = RabbitMQConfig(
+            host='localhost',
+            port=5672,
+            virtual_host='test_vhost',
+            username='test_user',
+            password='test_pass',
+            exchange_name='test_exchange',
+            routing_key='camera.#',
+            queue_name='test_queue'
+        )
+        self.consumer = RabbitMQConsumer(self.config)
+
+    def test_rabbitmq_consumer_initialization(self):
+        """
+        Test RabbitMQConsumer initialization.
+        """
+        assert self.consumer.config == self.config
+        assert self.consumer.connection is None
+        assert self.consumer.channel is None
+        assert self.consumer.queue_name is None
+        assert self.consumer.message_callback is None
+
+    @patch('pika.BlockingConnection')
+    @patch('pika.PlainCredentials')
+    @patch('pika.ConnectionParameters')
+    def test_connect_successful(self, mock_params, mock_credentials, mock_connection):
+        """
+        Test successful connection to RabbitMQ.
+        """
+        mock_conn = Mock()
+        mock_channel = Mock()
+        mock_queue_result = Mock()
+        mock_queue_result.method.queue = 'test_queue_name'
+        
+        mock_connection.return_value = mock_conn
+        mock_conn.channel.return_value = mock_channel
+        mock_channel.queue_declare.return_value = mock_queue_result
+        
+        result = self.consumer.connect()
+        
+        assert result is True
+        mock_credentials.assert_called_once_with('test_user', 'test_pass')
+        mock_connection.assert_called_once()
+        mock_channel.exchange_declare.assert_called_once_with(
+            exchange='test_exchange',
+            exchange_type='topic',
+            durable=True
+        )
+        mock_channel.queue_bind.assert_called_once()
+
+    @patch('pika.BlockingConnection')
+    def test_connect_amqp_connection_error(self, mock_connection):
+        """
+        Test connection failure with AMQPConnectionError.
+        """
+        import pika
+        mock_connection.side_effect = pika.exceptions.AMQPConnectionError("Connection failed")
+        
+        result = self.consumer.connect()
+        
+        assert result is False
+
+    @patch('pika.BlockingConnection')
+    def test_connect_general_exception(self, mock_connection):
+        """
+        Test connection failure with general exception.
+        """
+        mock_connection.side_effect = Exception("Unexpected error")
+        
+        result = self.consumer.connect()
+        
+        assert result is False
+
+    def test_set_message_callback(self):
+        """
+        Test setting message callback function.
+        """
+        callback_function = Mock()
+        
+        self.consumer.set_message_callback(callback_function)
+        
+        assert self.consumer.message_callback == callback_function
+
+    def test_start_consuming_without_proper_setup_raises_error(self):
+        """
+        Test start_consuming raises error when not properly configured.
+        """
+        with pytest.raises(RuntimeError, match="Consumer not properly configured"):
+            self.consumer.start_consuming()
+
+    def test_start_consuming_with_proper_setup(self):
+        """
+        Test start_consuming with proper configuration.
+        """
+        mock_channel = Mock()
+        callback_function = Mock()
+        
+        self.consumer.channel = mock_channel
+        self.consumer.queue_name = 'test_queue'
+        self.consumer.message_callback = callback_function
+        
+        self.consumer.start_consuming()
+        
+        mock_channel.basic_consume.assert_called_once_with(
+            queue='test_queue',
+            on_message_callback=self.consumer._on_message_received,
+            auto_ack=True
+        )
+
+    def test_on_message_received_calls_callback(self):
+        """
+        Test _on_message_received method calls message callback.
+        """
+        callback_function = Mock()
+        mock_method = Mock()
+        mock_method.routing_key = 'camera.cam1'
+        
+        self.consumer.message_callback = callback_function
+        
+        self.consumer._on_message_received(None, mock_method, None, b'frame_data')
+        
+        callback_function.assert_called_once_with('cam1', b'frame_data')
+
+    def test_process_data_events_with_connection(self):
+        """
+        Test process_data_events with active connection.
+        """
+        mock_connection = Mock()
+        self.consumer.connection = mock_connection
+        
+        self.consumer.process_data_events(0.5)
+        
+        mock_connection.process_data_events.assert_called_once_with(time_limit=0.5)
+
+    def test_process_data_events_without_connection(self):
+        """
+        Test process_data_events without connection does nothing.
+        """
+        self.consumer.connection = None
+        
+        # Should not raise any exception
+        self.consumer.process_data_events()
+
+    def test_is_connected_with_active_connection(self):
+        """
+        Test is_connected returns True with active connection.
+        """
+        mock_connection = Mock()
+        mock_connection.is_closed = False
+        self.consumer.connection = mock_connection
+        
+        result = self.consumer.is_connected()
+        
+        assert result is True
+
+    def test_is_connected_with_closed_connection(self):
+        """
+        Test is_connected returns False with closed connection.
+        """
+        mock_connection = Mock()
+        mock_connection.is_closed = True
+        self.consumer.connection = mock_connection
+        
+        result = self.consumer.is_connected()
+        
+        assert result is False
+
+    def test_is_connected_without_connection(self):
+        """
+        Test is_connected returns False without connection.
+        """
+        self.consumer.connection = None
+        
+        result = self.consumer.is_connected()
+        
+        assert result is False
+
+    def test_disconnect_with_active_connection(self):
+        """
+        Test disconnect with active connection.
+        """
+        mock_connection = Mock()
+        mock_connection.is_closed = False
+        self.consumer.connection = mock_connection
+        
+        self.consumer.disconnect()
+        
+        mock_connection.close.assert_called_once()
+        assert self.consumer.connection is None
+        assert self.consumer.channel is None
+        assert self.consumer.queue_name is None
+
+    def test_disconnect_with_exception(self):
+        """
+        Test disconnect handles exception gracefully.
+        """
+        mock_connection = Mock()
+        mock_connection.is_closed = False
+        mock_connection.close.side_effect = Exception("Close error")
+        self.consumer.connection = mock_connection
+        
+        # Should not raise exception
+        self.consumer.disconnect()
+        
+        assert self.consumer.connection is None
+
+    @patch('sys.exit')
+    @patch('os._exit')
+    def test_handle_keyboard_interrupt(self, mock_os_exit, mock_sys_exit):
+        """
+        Test handle_keyboard_interrupt method.
+        """
+        mock_connection = Mock()
+        self.consumer.connection = mock_connection
+        
+        mock_sys_exit.side_effect = SystemExit()
+        
+        self.consumer.handle_keyboard_interrupt()
+        
+        mock_connection.close.assert_called_once()
+        mock_sys_exit.assert_called_once_with(0)
+        mock_os_exit.assert_called_once_with(0)
+</file>
+
+<file path="tests/test_video_consumer_app.py">
+import pytest
+from unittest.mock import patch, Mock, MagicMock
+import numpy as np
+from src.video_consumer_app import VideoConsumerApplication
+from src.config.config_manager import ConfigManager
+
+
+class TestVideoConsumerApplication:
+    """
+    Test class for VideoConsumerApplication functionality.
+    """
+
+    def setup_method(self):
+        """
+        Setup method called before each test.
+        """
+        self.config_manager = ConfigManager()
+        self.app = VideoConsumerApplication(self.config_manager)
+
+    @patch('src.video_consumer_app.RabbitMQConsumer')
+    @patch('src.video_consumer_app.VideoFrameProcessor')
+    @patch('src.video_consumer_app.VideoDisplayManager')
+    def test_video_consumer_app_initialization(self, mock_display, mock_processor, mock_consumer):
+        """
+        Test VideoConsumerApplication initialization.
+        """
+        config_manager = ConfigManager()
+        app = VideoConsumerApplication(config_manager)
+        
+        assert app.config_manager == config_manager
+        assert app.is_running is False
+        mock_consumer.assert_called_once()
+        mock_processor.assert_called_once()
+        mock_display.assert_called_once()
+
+    def test_handle_frame_message_successful_decoding(self):
+        """
+        Test _handle_frame_message with successful frame decoding.
+        """
+        test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        self.app.video_processor.decode_frame = Mock(return_value=test_frame)
+        self.app.display_manager.update_camera_frame = Mock()
+        
+        self.app._handle_frame_message("cam1", b"frame_data")
+        
+        self.app.video_processor.decode_frame.assert_called_once_with(b"frame_data")
+        self.app.display_manager.update_camera_frame.assert_called_once_with("cam1", test_frame)
+
+    def test_handle_frame_message_failed_decoding(self):
+        """
+        Test _handle_frame_message with failed frame decoding.
+        """
+        self.app.video_processor.decode_frame = Mock(return_value=None)
+        self.app.display_manager.update_camera_frame = Mock()
+        
+        self.app._handle_frame_message("cam1", b"invalid_data")
+        
+        self.app.video_processor.decode_frame.assert_called_once_with(b"invalid_data")
+        self.app.display_manager.update_camera_frame.assert_not_called()
+
+    def test_start_successful_connection(self):
+        """
+        Test start method with successful RabbitMQ connection.
+        """
+        self.app.consumer.connect = Mock(return_value=True)
+        self.app.consumer.start_consuming = Mock()
+        
+        result = self.app.start()
+        
+        assert result is True
+        assert self.app.is_running is True
+        self.app.consumer.connect.assert_called_once()
+        self.app.consumer.start_consuming.assert_called_once()
+
+    def test_start_failed_connection(self):
+        """
+        Test start method with failed RabbitMQ connection.
+        """
+        self.app.consumer.connect = Mock(return_value=False)
+        self.app.consumer.start_consuming = Mock()
+        
+        result = self.app.start()
+        
+        assert result is False
+        assert self.app.is_running is False
+        self.app.consumer.connect.assert_called_once()
+        self.app.consumer.start_consuming.assert_not_called()
+
+    def test_update_display(self):
+        """
+        Test _update_display method functionality.
+        """
+        test_frames = {"cam1": np.zeros((480, 640, 3), dtype=np.uint8)}
+        processed_frames = [np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(6)]
+        grid_display = np.zeros((960, 1920, 3), dtype=np.uint8)
+        
+        self.app.display_manager.get_camera_frames = Mock(return_value=test_frames)
+        self.app.video_processor.process_frames_for_grid = Mock(return_value=processed_frames)
+        self.app.video_processor.create_grid_display = Mock(return_value=grid_display)
+        self.app.display_manager.display_grid = Mock()
+        
+        self.app._update_display()
+        
+        self.app.display_manager.get_camera_frames.assert_called_once()
+        self.app.video_processor.process_frames_for_grid.assert_called_once_with(test_frames)
+        self.app.video_processor.create_grid_display.assert_called_once_with(processed_frames)
+        self.app.display_manager.display_grid.assert_called_once_with(grid_display)
+
+    def test_run_main_loop_normal_exit(self):
+        """
+        Test run_main_loop with normal exit condition.
+        """
+        self.app.is_running = True
+        self.app.consumer.process_data_events = Mock()
+        self.app.display_manager.has_camera_frames = Mock(return_value=False)
+        self.app.display_manager.check_exit_key = Mock(side_effect=[False, True])
+        self.app.stop = Mock()
+        
+        self.app.run_main_loop()
+        
+        assert self.app.consumer.process_data_events.call_count >= 1
+        self.app.stop.assert_called_once()
+
+    def test_run_main_loop_keyboard_interrupt(self):
+        """
+        Test run_main_loop with keyboard interrupt.
+        """
+        self.app.is_running = True
+        self.app.consumer.process_data_events = Mock(side_effect=KeyboardInterrupt)
+        self.app.consumer.handle_keyboard_interrupt = Mock()
+        self.app.stop = Mock()
+        
+        self.app.run_main_loop()
+        
+        self.app.consumer.handle_keyboard_interrupt.assert_called_once()
+        self.app.stop.assert_called_once()
+
+    def test_run_main_loop_with_display_update(self):
+        """
+        Test run_main_loop with display update.
+        """
+        self.app.is_running = True
+        self.app.consumer.process_data_events = Mock()
+        self.app.display_manager.has_camera_frames = Mock(side_effect=[True, False])
+        self.app.display_manager.check_exit_key = Mock(side_effect=[False, True])
+        self.app._update_display = Mock()
+        self.app.stop = Mock()
+        
+        self.app.run_main_loop()
+        
+        self.app._update_display.assert_called_once()
+
+    def test_stop(self):
+        """
+        Test stop method functionality.
+        """
+        self.app.is_running = True
+        self.app.display_manager.close_windows = Mock()
+        self.app.consumer.disconnect = Mock()
+        
+        self.app.stop()
+        
+        assert self.app.is_running is False
+        self.app.display_manager.close_windows.assert_called_once()
+        self.app.consumer.disconnect.assert_called_once()
+
+    def test_get_running_status_when_running(self):
+        """
+        Test get_running_status returns True when running.
+        """
+        self.app.is_running = True
+        
+        result = self.app.get_running_status()
+        
+        assert result is True
+
+    def test_get_running_status_when_not_running(self):
+        """
+        Test get_running_status returns False when not running.
+        """
+        self.app.is_running = False
+        
+        result = self.app.get_running_status()
+        
+        assert result is False
+</file>
+
+<file path="tests/test_video_processor.py">
+import pytest
+import numpy as np
+import cv2
+from unittest.mock import patch, Mock
+from src.display.video_processor import VideoFrameProcessor
+
+
+class TestVideoFrameProcessor:
+    """
+    Test class for VideoFrameProcessor functionality.
+    """
+
+    def setup_method(self):
+        """
+        Setup method called before each test.
+        """
+        self.processor = VideoFrameProcessor()
+
+    def test_video_processor_initialization_with_default_values(self):
+        """
+        Test VideoFrameProcessor initialization with default grid parameters.
+        """
+        assert self.processor.grid_width == 3
+        assert self.processor.grid_height == 2
+        assert self.processor.max_cameras == 6
+        assert self.processor.frame_width == 640
+        assert self.processor.frame_height == 480
+
+    def test_video_processor_initialization_with_custom_values(self):
+        """
+        Test VideoFrameProcessor initialization with custom grid parameters.
+        """
+        custom_processor = VideoFrameProcessor(grid_width=4, grid_height=3)
+        
+        assert custom_processor.grid_width == 4
+        assert custom_processor.grid_height == 3
+        assert custom_processor.max_cameras == 12
+
+    @patch('cv2.imdecode')
+    @patch('numpy.frombuffer')
+    def test_decode_frame_successful_decoding(self, mock_frombuffer, mock_imdecode):
+        """
+        Test successful frame decoding from bytes.
+        """
+        test_data = b'fake_image_data'
+        mock_array = Mock()
+        mock_image = np.zeros((480, 640, 3), dtype=np.uint8)
+        
+        mock_frombuffer.return_value = mock_array
+        mock_imdecode.return_value = mock_image
+        
+        result = self.processor.decode_frame(test_data)
+        
+        mock_frombuffer.assert_called_once_with(test_data, np.uint8)
+        mock_imdecode.assert_called_once_with(mock_array, cv2.IMREAD_COLOR)
+        assert np.array_equal(result, mock_image)
+
+    @patch('cv2.imdecode')
+    @patch('numpy.frombuffer')
+    def test_decode_frame_failed_decoding(self, mock_frombuffer, mock_imdecode):
+        """
+        Test frame decoding failure returns None.
+        """
+        test_data = b'invalid_image_data'
+        mock_array = Mock()
+        
+        mock_frombuffer.return_value = mock_array
+        mock_imdecode.return_value = None
+        
+        result = self.processor.decode_frame(test_data)
+        
+        assert result is None
+
+    @patch('cv2.imdecode')
+    @patch('numpy.frombuffer')
+    def test_decode_frame_exception_handling(self, mock_frombuffer, mock_imdecode):
+        """
+        Test frame decoding exception handling.
+        """
+        test_data = b'corrupt_data'
+        mock_frombuffer.side_effect = Exception("Decoding error")
+        
+        result = self.processor.decode_frame(test_data)
+        
+        assert result is None
+
+    @patch('cv2.resize')
+    def test_resize_frame(self, mock_resize):
+        """
+        Test frame resizing functionality.
+        """
+        input_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        resized_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        
+        mock_resize.return_value = resized_frame
+        
+        result = self.processor.resize_frame(input_frame)
+        
+        mock_resize.assert_called_once_with(input_frame, (640, 480))
+        assert np.array_equal(result, resized_frame)
+
+    @patch('cv2.putText')
+    def test_add_camera_label(self, mock_putText):
+        """
+        Test adding camera label to frame.
+        """
+        input_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        camera_id = "cam1"
+        
+        result = self.processor.add_camera_label(input_frame, camera_id)
+        
+        mock_putText.assert_called_once()
+        assert isinstance(result, np.ndarray)
+
+    @patch('cv2.putText')
+    def test_create_placeholder_frame(self, mock_putText):
+        """
+        Test creating placeholder frame for inactive cameras.
+        """
+        camera_number = 1
+        
+        result = self.processor.create_placeholder_frame(camera_number)
+        
+        assert result.shape == (480, 640, 3)
+        assert result.dtype == np.uint8
+        mock_putText.assert_called_once()
+
+    @patch.object(VideoFrameProcessor, 'add_camera_label')
+    @patch.object(VideoFrameProcessor, 'resize_frame')
+    @patch.object(VideoFrameProcessor, 'create_placeholder_frame')
+    def test_process_frames_for_grid_with_all_cameras(self, mock_placeholder, mock_resize, mock_label):
+        """
+        Test processing frames when all camera slots are filled.
+        """
+        camera_frames = {
+            'cam1': np.zeros((720, 1280, 3), dtype=np.uint8),
+            'cam2': np.zeros((720, 1280, 3), dtype=np.uint8),
+            'cam3': np.zeros((720, 1280, 3), dtype=np.uint8),
+            'cam4': np.zeros((720, 1280, 3), dtype=np.uint8),
+            'cam5': np.zeros((720, 1280, 3), dtype=np.uint8),
+            'cam6': np.zeros((720, 1280, 3), dtype=np.uint8)
+        }
+        
+        resized_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        labeled_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        
+        mock_resize.return_value = resized_frame
+        mock_label.return_value = labeled_frame
+        
+        result = self.processor.process_frames_for_grid(camera_frames)
+        
+        assert len(result) == 6
+        assert mock_resize.call_count == 6
+        assert mock_label.call_count == 6
+        assert not mock_placeholder.called
+
+    @patch.object(VideoFrameProcessor, 'add_camera_label')
+    @patch.object(VideoFrameProcessor, 'resize_frame')
+    @patch.object(VideoFrameProcessor, 'create_placeholder_frame')
+    def test_process_frames_for_grid_with_partial_cameras(self, mock_placeholder, mock_resize, mock_label):
+        """
+        Test processing frames when only some camera slots are filled.
+        """
+        camera_frames = {
+            'cam1': np.zeros((720, 1280, 3), dtype=np.uint8),
+            'cam2': np.zeros((720, 1280, 3), dtype=np.uint8)
+        }
+        
+        resized_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        labeled_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        placeholder_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        
+        mock_resize.return_value = resized_frame
+        mock_label.return_value = labeled_frame
+        mock_placeholder.return_value = placeholder_frame
+        
+        result = self.processor.process_frames_for_grid(camera_frames)
+        
+        assert len(result) == 6
+        assert mock_resize.call_count == 2
+        assert mock_label.call_count == 2
+        assert mock_placeholder.call_count == 4
+
+    @patch('numpy.vstack')
+    @patch('numpy.hstack')
+    def test_create_grid_display_success(self, mock_hstack, mock_vstack):
+        """
+        Test successful grid display creation.
+        """
+        processed_frames = [np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(6)]
+        row_frame = np.zeros((480, 1920, 3), dtype=np.uint8)
+        grid_frame = np.zeros((960, 1920, 3), dtype=np.uint8)
+        
+        mock_hstack.return_value = row_frame
+        mock_vstack.return_value = grid_frame
+        
+        result = self.processor.create_grid_display(processed_frames)
+        
+        assert mock_hstack.call_count == 2
+        mock_vstack.assert_called_once()
+        assert np.array_equal(result, grid_frame)
+
+    def test_create_grid_display_invalid_frame_count(self):
+        """
+        Test grid display creation with invalid frame count raises ValueError.
+        """
+        invalid_frames = [np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(4)]
+        
+        with pytest.raises(ValueError, match="Expected 6 frames, got 4"):
+            self.processor.create_grid_display(invalid_frames)
+</file>
+
+<file path=".dockerignore">
+/src/
+
+/tests/
+
+.DS_Store
+.git
+.gitignore
+.vscode
+.idea
+node_modules
+.env
+*.log
+*.tmp
+*.bak
+*.swp
+*.old
+*.cache
+*.dist
+*.zip
+*.tar.gz
+*.exe
+*.dll
+*.so
+*.dylib
+
+
+# Created by https://www.toptal.com/developers/gitignore/api/go,vs,visualstudio,pycharm,pycharm+iml,pycharm+all,goland,goland+all,goland+iml
+# Edit at https://www.toptal.com/developers/gitignore?templates=go,vs,visualstudio,pycharm,pycharm+iml,pycharm+all,goland,goland+all,goland+iml
+
+### Go ###
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+#
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+### GoLand ###
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+# User-specific stuff
+.idea/**/workspace.xml
+.idea/**/tasks.xml
+.idea/**/usage.statistics.xml
+.idea/**/dictionaries
+.idea/**/shelf
+
+# AWS User-specific
+.idea/**/aws.xml
+
+# Generated files
+.idea/**/contentModel.xml
+
+# Sensitive or high-churn files
+.idea/**/dataSources/
+.idea/**/dataSources.ids
+.idea/**/dataSources.local.xml
+.idea/**/sqlDataSources.xml
+.idea/**/dynamic.xml
+.idea/**/uiDesigner.xml
+.idea/**/dbnavigator.xml
+
+# Gradle
+.idea/**/gradle.xml
+.idea/**/libraries
+
+# Gradle and Maven with auto-import
+# When using Gradle or Maven with auto-import, you should exclude module files,
+# since they will be recreated, and may cause churn.  Uncomment if using
+# auto-import.
+# .idea/artifacts
+# .idea/compiler.xml
+# .idea/jarRepositories.xml
+# .idea/modules.xml
+# .idea/*.iml
+# .idea/modules
+# *.iml
+# *.ipr
+
+# CMake
+cmake-build-*/
+
+# Mongo Explorer plugin
+.idea/**/mongoSettings.xml
+
+# File-based project format
+*.iws
+
+# IntelliJ
+out/
+
+# mpeltonen/sbt-idea plugin
+.idea_modules/
+
+# JIRA plugin
+atlassian-ide-plugin.xml
+
+# Cursive Clojure plugin
+.idea/replstate.xml
+
+# SonarLint plugin
+.idea/sonarlint/
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties
+
+# Editor-based Rest Client
+.idea/httpRequests
+
+# Android studio 3.1+ serialized cache file
+.idea/caches/build_file_checksums.ser
+
+### GoLand Patch ###
+# Comment Reason: https://github.com/joeblau/gitignore.io/issues/186#issuecomment-215987721
+
+# *.iml
+# modules.xml
+# .idea/misc.xml
+# *.ipr
+
+# Sonarlint plugin
+# https://plugins.jetbrains.com/plugin/7973-sonarlint
+.idea/**/sonarlint/
+
+# SonarQube Plugin
+# https://plugins.jetbrains.com/plugin/7238-sonarqube-community-plugin
+.idea/**/sonarIssues.xml
+
+# Markdown Navigator plugin
+# https://plugins.jetbrains.com/plugin/7896-markdown-navigator-enhanced
+.idea/**/markdown-navigator.xml
+.idea/**/markdown-navigator-enh.xml
+.idea/**/markdown-navigator/
+
+# Cache file creation bug
+# See https://youtrack.jetbrains.com/issue/JBR-2257
+.idea/$CACHE_FILE$
+
+# CodeStream plugin
+# https://plugins.jetbrains.com/plugin/12206-codestream
+.idea/codestream.xml
+
+# Azure Toolkit for IntelliJ plugin
+# https://plugins.jetbrains.com/plugin/8053-azure-toolkit-for-intellij
+.idea/**/azureSettings.xml
+
+### GoLand+all ###
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+# User-specific stuff
+
+# AWS User-specific
+
+# Generated files
+
+# Sensitive or high-churn files
+
+# Gradle
+
+# Gradle and Maven with auto-import
+# When using Gradle or Maven with auto-import, you should exclude module files,
+# since they will be recreated, and may cause churn.  Uncomment if using
+# auto-import.
+# .idea/artifacts
+# .idea/compiler.xml
+# .idea/jarRepositories.xml
+# .idea/modules.xml
+# .idea/*.iml
+# .idea/modules
+# *.iml
+# *.ipr
+
+# CMake
+
+# Mongo Explorer plugin
+
+# File-based project format
+
+# IntelliJ
+
+# mpeltonen/sbt-idea plugin
+
+# JIRA plugin
+
+# Cursive Clojure plugin
+
+# SonarLint plugin
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+
+# Editor-based Rest Client
+
+# Android studio 3.1+ serialized cache file
+
+### GoLand+all Patch ###
+# Ignore everything but code style settings and run configurations
+# that are supposed to be shared within teams.
+
+.idea/*
+
+!.idea/codeStyles
+!.idea/runConfigurations
+
+### GoLand+iml ###
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+# User-specific stuff
+
+# AWS User-specific
+
+# Generated files
+
+# Sensitive or high-churn files
+
+# Gradle
+
+# Gradle and Maven with auto-import
+# When using Gradle or Maven with auto-import, you should exclude module files,
+# since they will be recreated, and may cause churn.  Uncomment if using
+# auto-import.
+# .idea/artifacts
+# .idea/compiler.xml
+# .idea/jarRepositories.xml
+# .idea/modules.xml
+# .idea/*.iml
+# .idea/modules
+# *.iml
+# *.ipr
+
+# CMake
+
+# Mongo Explorer plugin
+
+# File-based project format
+
+# IntelliJ
+
+# mpeltonen/sbt-idea plugin
+
+# JIRA plugin
+
+# Cursive Clojure plugin
+
+# SonarLint plugin
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+
+# Editor-based Rest Client
+
+# Android studio 3.1+ serialized cache file
+
+### GoLand+iml Patch ###
+# Reason: https://github.com/joeblau/gitignore.io/issues/186#issuecomment-249601023
+
+*.iml
+modules.xml
+.idea/misc.xml
+*.ipr
+
+### PyCharm ###
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+# User-specific stuff
+
+# AWS User-specific
+
+# Generated files
+
+# Sensitive or high-churn files
+
+# Gradle
+
+# Gradle and Maven with auto-import
+# When using Gradle or Maven with auto-import, you should exclude module files,
+# since they will be recreated, and may cause churn.  Uncomment if using
+# auto-import.
+# .idea/artifacts
+# .idea/compiler.xml
+# .idea/jarRepositories.xml
+# .idea/modules.xml
+# .idea/*.iml
+# .idea/modules
+# *.iml
+# *.ipr
+
+# CMake
+
+# Mongo Explorer plugin
+
+# File-based project format
+
+# IntelliJ
+
+# mpeltonen/sbt-idea plugin
+
+# JIRA plugin
+
+# Cursive Clojure plugin
+
+# SonarLint plugin
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+
+# Editor-based Rest Client
+
+# Android studio 3.1+ serialized cache file
+
+### PyCharm Patch ###
+# Comment Reason: https://github.com/joeblau/gitignore.io/issues/186#issuecomment-215987721
+
+# *.iml
+# modules.xml
+# .idea/misc.xml
+# *.ipr
+
+# Sonarlint plugin
+# https://plugins.jetbrains.com/plugin/7973-sonarlint
+
+# SonarQube Plugin
+# https://plugins.jetbrains.com/plugin/7238-sonarqube-community-plugin
+
+# Markdown Navigator plugin
+# https://plugins.jetbrains.com/plugin/7896-markdown-navigator-enhanced
+
+# Cache file creation bug
+# See https://youtrack.jetbrains.com/issue/JBR-2257
+
+# CodeStream plugin
+# https://plugins.jetbrains.com/plugin/12206-codestream
+
+# Azure Toolkit for IntelliJ plugin
+# https://plugins.jetbrains.com/plugin/8053-azure-toolkit-for-intellij
+
+### PyCharm+all ###
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+# User-specific stuff
+
+# AWS User-specific
+
+# Generated files
+
+# Sensitive or high-churn files
+
+# Gradle
+
+# Gradle and Maven with auto-import
+# When using Gradle or Maven with auto-import, you should exclude module files,
+# since they will be recreated, and may cause churn.  Uncomment if using
+# auto-import.
+# .idea/artifacts
+# .idea/compiler.xml
+# .idea/jarRepositories.xml
+# .idea/modules.xml
+# .idea/*.iml
+# .idea/modules
+# *.iml
+# *.ipr
+
+# CMake
+
+# Mongo Explorer plugin
+
+# File-based project format
+
+# IntelliJ
+
+# mpeltonen/sbt-idea plugin
+
+# JIRA plugin
+
+# Cursive Clojure plugin
+
+# SonarLint plugin
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+
+# Editor-based Rest Client
+
+# Android studio 3.1+ serialized cache file
+
+### PyCharm+all Patch ###
+# Ignore everything but code style settings and run configurations
+# that are supposed to be shared within teams.
+
+
+
+### PyCharm+iml ###
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+# User-specific stuff
+
+# AWS User-specific
+
+# Generated files
+
+# Sensitive or high-churn files
+
+# Gradle
+
+# Gradle and Maven with auto-import
+# When using Gradle or Maven with auto-import, you should exclude module files,
+# since they will be recreated, and may cause churn.  Uncomment if using
+# auto-import.
+# .idea/artifacts
+# .idea/compiler.xml
+# .idea/jarRepositories.xml
+# .idea/modules.xml
+# .idea/*.iml
+# .idea/modules
+# *.iml
+# *.ipr
+
+# CMake
+
+# Mongo Explorer plugin
+
+# File-based project format
+
+# IntelliJ
+
+# mpeltonen/sbt-idea plugin
+
+# JIRA plugin
+
+# Cursive Clojure plugin
+
+# SonarLint plugin
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+
+# Editor-based Rest Client
+
+# Android studio 3.1+ serialized cache file
+
+### PyCharm+iml Patch ###
+# Reason: https://github.com/joeblau/gitignore.io/issues/186#issuecomment-249601023
+
+
+### vs ###
+## Ignore Visual Studio temporary files, build results, and
+## files generated by popular Visual Studio add-ons.
+##
+## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# User-specific files (MonoDevelop/Xamarin Studio)
+*.userprefs
+
+# Mono auto generated files
+mono_crash.*
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio 2015/2017 cache/options directory
+.vs/
+# Uncomment if you have tasks that create the project's static files in wwwroot
+#wwwroot/
+
+# Visual Studio 2017 auto generated files
+Generated\ Files/
+
+# MSTest test Results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+
+# NUnit
+*.VisualState.xml
+TestResult.xml
+nunit-*.xml
+
+# Build Results of an ATL Project
+[Dd]ebugPS/
+[Rr]eleasePS/
+dlldata.c
+
+# Benchmark Results
+BenchmarkDotNet.Artifacts/
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# StyleCop
+StyleCopReport.xml
+
+# Files built by Visual Studio
+*_i.c
+*_p.c
+*_h.h
+*.ilk
+*.meta
+*.obj
+*.iobj
+*.pch
+*.pdb
+*.ipdb
+*.pgc
+*.pgd
+*.rsp
+*.sbr
+*.tlb
+*.tli
+*.tlh
+*.tmp
+*.tmp_proj
+*_wpftmp.csproj
+*.log
+*.vspscc
+*.vssscc
+.builds
+*.pidb
+*.svclog
+*.scc
+
+# Chutzpah Test files
+_Chutzpah*
+
+# Visual C++ cache files
+ipch/
+*.aps
+*.ncb
+*.opendb
+*.opensdf
+*.sdf
+*.cachefile
+*.VC.db
+*.VC.VC.opendb
+
+# Visual Studio profiler
+*.psess
+*.vsp
+*.vspx
+*.sap
+
+# Visual Studio Trace Files
+*.e2e
+
+# TFS 2012 Local Workspace
+$tf/
+
+# Guidance Automation Toolkit
+*.gpState
+
+# ReSharper is a .NET coding add-in
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# TeamCity is a build add-in
+_TeamCity*
+
+# DotCover is a Code Coverage Tool
+*.dotCover
+
+# AxoCover is a Code Coverage Tool
+.axoCover/*
+!.axoCover/settings.json
+
+# Coverlet is a free, cross platform Code Coverage Tool
+coverage*[.json, .xml, .info]
+
+# Visual Studio code coverage results
+*.coverage
+*.coveragexml
+
+# NCrunch
+_NCrunch_*
+.*crunch*.local.xml
+nCrunchTemp_*
+
+# MightyMoose
+*.mm.*
+AutoTest.Net/
+
+# Web workbench (sass)
+.sass-cache/
+
+# Installshield output folder
+[Ee]xpress/
+
+# DocProject is a documentation generator add-in
+DocProject/buildhelp/
+DocProject/Help/*.HxT
+DocProject/Help/*.HxC
+DocProject/Help/*.hhc
+DocProject/Help/*.hhk
+DocProject/Help/*.hhp
+DocProject/Help/Html2
+DocProject/Help/html
+
+# Click-Once directory
+publish/
+
+# Publish Web Output
+*.[Pp]ublish.xml
+*.azurePubxml
+# Note: Comment the next line if you want to checkin your web deploy settings,
+# but database connection strings (with potential passwords) will be unencrypted
+*.pubxml
+*.publishproj
+
+# Microsoft Azure Web App publish settings. Comment the next line if you want to
+# checkin your Azure Web App publish settings, but sensitive information contained
+# in these scripts will be unencrypted
+PublishScripts/
+
+# NuGet Packages
+*.nupkg
+# NuGet Symbol Packages
+*.snupkg
+# The packages folder can be ignored because of Package Restore
+**/[Pp]ackages/*
+# except build/, which is used as an MSBuild target.
+!**/[Pp]ackages/build/
+# Uncomment if necessary however generally it will be regenerated when needed
+#!**/[Pp]ackages/repositories.config
+# NuGet v3's project.json files produces more ignorable files
+*.nuget.props
+*.nuget.targets
+
+# Microsoft Azure Build Output
+csx/
+*.build.csdef
+
+# Microsoft Azure Emulator
+ecf/
+rcf/
+
+# Windows Store app package directories and files
+AppPackages/
+BundleArtifacts/
+Package.StoreAssociation.xml
+_pkginfo.txt
+*.appx
+*.appxbundle
+*.appxupload
+
+# Visual Studio cache files
+# files ending in .cache can be ignored
+*.[Cc]ache
+# but keep track of directories ending in .cache
+!?*.[Cc]ache/
+
+# Others
+ClientBin/
+~$*
+*~
+*.dbmdl
+*.dbproj.schemaview
+*.jfm
+*.pfx
+*.publishsettings
+orleans.codegen.cs
+
+# Including strong name files can present a security risk
+# (https://github.com/github/gitignore/pull/2483#issue-259490424)
+#*.snk
+
+# Since there are multiple workflows, uncomment next line to ignore bower_components
+# (https://github.com/github/gitignore/pull/1529#issuecomment-104372622)
+#bower_components/
+
+# RIA/Silverlight projects
+Generated_Code/
+
+# Backup & report files from converting an old project file
+# to a newer Visual Studio version. Backup files are not needed,
+# because we have git ;-)
+_UpgradeReport_Files/
+Backup*/
+UpgradeLog*.XML
+UpgradeLog*.htm
+ServiceFabricBackup/
+*.rptproj.bak
+
+# SQL Server files
+*.mdf
+*.ldf
+*.ndf
+
+# Business Intelligence projects
+*.rdl.data
+*.bim.layout
+*.bim_*.settings
+*.rptproj.rsuser
+*- [Bb]ackup.rdl
+*- [Bb]ackup ([0-9]).rdl
+*- [Bb]ackup ([0-9][0-9]).rdl
+
+# Microsoft Fakes
+FakesAssemblies/
+
+# GhostDoc plugin setting file
+*.GhostDoc.xml
+
+# Node.js Tools for Visual Studio
+.ntvs_analysis.dat
+node_modules/
+
+# Visual Studio 6 build log
+*.plg
+
+# Visual Studio 6 workspace options file
+*.opt
+
+# Visual Studio 6 auto-generated workspace file (contains which files were open etc.)
+*.vbw
+
+# Visual Studio LightSwitch build output
+**/*.HTMLClient/GeneratedArtifacts
+**/*.DesktopClient/GeneratedArtifacts
+**/*.DesktopClient/ModelManifest.xml
+**/*.Server/GeneratedArtifacts
+**/*.Server/ModelManifest.xml
+_Pvt_Extensions
+
+# Paket dependency manager
+.paket/paket.exe
+paket-files/
+
+# FAKE - F# Make
+.fake/
+
+# CodeRush personal settings
+.cr/personal
+
+# Python Tools for Visual Studio (PTVS)
+__pycache__/
+*.pyc
+
+# Cake - Uncomment if you are using it
+# tools/**
+# !tools/packages.config
+
+# Tabs Studio
+*.tss
+
+# Telerik's JustMock configuration file
+*.jmconfig
+
+# BizTalk build output
+*.btp.cs
+*.btm.cs
+*.odx.cs
+*.xsd.cs
+
+# OpenCover UI analysis results
+OpenCover/
+
+# Azure Stream Analytics local run output
+ASALocalRun/
+
+# MSBuild Binary and Structured Log
+*.binlog
+
+# NVidia Nsight GPU debugger configuration file
+*.nvuser
+
+# MFractors (Xamarin productivity tool) working folder
+.mfractor/
+
+# Local History for Visual Studio
+.localhistory/
+
+# BeatPulse healthcheck temp database
+healthchecksdb
+
+# Backup folder for Package Reference Convert tool in Visual Studio 2017
+MigrationBackup/
+
+# Ionide (cross platform F# VS Code tools) working folder
+.ionide/
+
+### VisualStudio ###
+## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
+
+# User-specific files
+
+# User-specific files (MonoDevelop/Xamarin Studio)
+
+# Mono auto generated files
+
+# Build results
+[Ww][Ii][Nn]32/
+
+# Visual Studio 2015/2017 cache/options directory
+# Uncomment if you have tasks that create the project's static files in wwwroot
+
+# Visual Studio 2017 auto generated files
+
+# MSTest test Results
+
+# NUnit
+
+# Build Results of an ATL Project
+
+# Benchmark Results
+
+# .NET Core
+
+# ASP.NET Scaffolding
+ScaffoldingReadMe.txt
+
+# StyleCop
+
+# Files built by Visual Studio
+*.tlog
+
+# Chutzpah Test files
+
+# Visual C++ cache files
+
+# Visual Studio profiler
+
+# Visual Studio Trace Files
+
+# TFS 2012 Local Workspace
+
+# Guidance Automation Toolkit
+
+# ReSharper is a .NET coding add-in
+
+# TeamCity is a build add-in
+
+# DotCover is a Code Coverage Tool
+
+# AxoCover is a Code Coverage Tool
+
+# Coverlet is a free, cross platform Code Coverage Tool
+coverage*.json
+coverage*.xml
+coverage*.info
+
+# Visual Studio code coverage results
+
+# NCrunch
+
+# MightyMoose
+
+# Web workbench (sass)
+
+# Installshield output folder
+
+# DocProject is a documentation generator add-in
+
+# Click-Once directory
+
+# Publish Web Output
+# Note: Comment the next line if you want to checkin your web deploy settings,
+# but database connection strings (with potential passwords) will be unencrypted
+
+# Microsoft Azure Web App publish settings. Comment the next line if you want to
+# checkin your Azure Web App publish settings, but sensitive information contained
+# in these scripts will be unencrypted
+
+# NuGet Packages
+# NuGet Symbol Packages
+# The packages folder can be ignored because of Package Restore
+# except build/, which is used as an MSBuild target.
+# Uncomment if necessary however generally it will be regenerated when needed
+# NuGet v3's project.json files produces more ignorable files
+
+# Microsoft Azure Build Output
+
+# Microsoft Azure Emulator
+
+# Windows Store app package directories and files
+
+# Visual Studio cache files
+# files ending in .cache can be ignored
+# but keep track of directories ending in .cache
+
+# Others
+
+# Including strong name files can present a security risk
+# (https://github.com/github/gitignore/pull/2483#issue-259490424)
+
+# Since there are multiple workflows, uncomment next line to ignore bower_components
+# (https://github.com/github/gitignore/pull/1529#issuecomment-104372622)
+
+# RIA/Silverlight projects
+
+# Backup & report files from converting an old project file
+# to a newer Visual Studio version. Backup files are not needed,
+# because we have git ;-)
+
+# SQL Server files
+
+# Business Intelligence projects
+
+# Microsoft Fakes
+
+# GhostDoc plugin setting file
+
+# Node.js Tools for Visual Studio
+
+# Visual Studio 6 build log
+
+# Visual Studio 6 workspace options file
+
+# Visual Studio 6 auto-generated workspace file (contains which files were open etc.)
+
+# Visual Studio 6 auto-generated project file (contains which files were open etc.)
+*.vbp
+
+# Visual Studio 6 workspace and project file (working project files containing files to include in project)
+*.dsw
+*.dsp
+
+# Visual Studio 6 technical files
+
+# Visual Studio LightSwitch build output
+
+# Paket dependency manager
+
+# FAKE - F# Make
+
+# CodeRush personal settings
+
+# Python Tools for Visual Studio (PTVS)
+
+# Cake - Uncomment if you are using it
+# tools/**
+# !tools/packages.config
+
+# Tabs Studio
+
+# Telerik's JustMock configuration file
+
+# BizTalk build output
+
+# OpenCover UI analysis results
+
+# Azure Stream Analytics local run output
+
+# MSBuild Binary and Structured Log
+
+# NVidia Nsight GPU debugger configuration file
+
+# MFractors (Xamarin productivity tool) working folder
+
+# Local History for Visual Studio
+
+# Visual Studio History (VSHistory) files
+.vshistory/
+
+# BeatPulse healthcheck temp database
+
+# Backup folder for Package Reference Convert tool in Visual Studio 2017
+
+# Ionide (cross platform F# VS Code tools) working folder
+
+# Fody - auto-generated XML schema
+FodyWeavers.xsd
+
+# VS Code files for those working on multiple tools
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# Local History for Visual Studio Code
+.history/
+
+# Windows Installer files from build outputs
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+
+# JetBrains Rider
+*.sln.iml
+
+### VisualStudio Patch ###
+# Additional files built by Visual Studio
+
+# End of https://www.toptal.com/developers/gitignore/api/go,vs,visualstudio,pycharm,pycharm+iml,pycharm+all,goland,goland+all,goland+iml
+
+
+
+main_refactored.py
+test_consumer.py
+</file>
+
+<file path="main_refactored.py">
+from src.config.config_manager import ConfigManager
+from src.video_consumer_app import VideoConsumerApplication
+
+
+def main() -> None:
+    """
+    Main entry point for the video consumer application.
+    """
+    config_manager = ConfigManager()
+    video_app = VideoConsumerApplication(config_manager)
+    
+    if video_app.start():
+        video_app.run_main_loop()
+    else:
+        print("Failed to start video consumer application.")
+
 
 if __name__ == '__main__':
     main()
 </file>
 
-<file path="internal/camera/camera.go">
-package camera
+<file path="Makefile">
+.PHONY: help install test lint format run clean dev-setup
 
-import (
-	"context"
-	"log"
-	"time"
+help: ## Mostrar esta ajuda
+	@echo "Comandos disponíveis:"
+	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-	"edge_guard_ai/internal/mq"
-	"edge_guard_ai/internal/util"
-)
+install: ## Instalar dependências
+	uv sync --dev
 
-type CameraConfig struct {
-	ID  string
-	URL string
-}
+test: ## Executar testes
+	uv run pytest
 
-type Capture struct {
-	ctx        context.Context
-	config     CameraConfig
-	interval   time.Duration
-	compressor *util.Compressor
-	publisher  mq.Publisher
-}
+test-cov: ## Executar testes com cobertura
+	uv run pytest --cov=src --cov-report=term-missing --cov-report=html
 
-func NewCapture(ctx context.Context, config CameraConfig, interval time.Duration, compressor *util.Compressor, publisher mq.Publisher) *Capture {
-	return &Capture{
-		ctx:        ctx,
-		config:     config,
-		interval:   interval,
-		compressor: compressor,
-		publisher:  publisher,
-	}
-}
+lint: ## Verificar código com ruff
+	uv run ruff check src/ tests/
 
-func (c *Capture) Start() {
-	go func() {
-		ticker := time.NewTicker(c.interval)
-		defer ticker.Stop()
+format: ## Formatar código com ruff
+	uv run ruff format src/ tests/
 
-		for {
-			select {
-			case <-c.ctx.Done():
-				log.Printf("parando captura para camera %s", c.config.ID)
-				return
-			case <-ticker.C:
-				c.captureAndPublish()
-			}
-		}
-	}()
-}
+format-check: ## Verificar formatação sem alterar
+	uv run ruff format --check src/ tests/
 
-func (c *Capture) captureAndPublish() {
-	// Simula a captura de um frame da camera
-	frameData := []byte("frame_data_from_" + c.config.ID)
-	log.Printf("capturado frame da camera %s", c.config.ID)
+run: ## Executar aplicação refatorada
+	uv run python main_refactored.py
 
-	var dataToPublish []byte
-	var err error
+run-original: ## Executar aplicação original
+	python test_consumer.py
 
-	if c.compressor != nil {
-		dataToPublish, err = c.compressor.Compress(frameData)
-		if err != nil {
-			log.Printf("erro ao comprimir frame: %v", err)
-			return
-		}
-	} else {
-		dataToPublish = frameData
-	}
+clean: ## Limpar arquivos temporários
+	find . -type f -name "*.pyc" -delete
+	find . -type d -name "__pycache__" -delete
+	find . -type d -name "*.egg-info" -exec rm -rf {} +
+	rm -rf .pytest_cache/
+	rm -rf htmlcov/
+	rm -rf .coverage
 
-	err = c.publisher.Publish(c.ctx, c.config.ID, dataToPublish)
-	if err != nil {
-		log.Printf("erro ao publicar frame: %v", err)
-	}
-}
+dev-setup: ## Configurar ambiente de desenvolvimento
+	./setup-dev.sh
+
+docker-up: ## Subir containers Docker
+	docker compose up -d
+
+docker-down: ## Parar containers Docker
+	docker compose down
+
+docker-logs: ## Ver logs dos containers
+	docker compose logs -f
+</file>
+
+<file path="setup-dev.sh">
+#!/bin/bash
+
+# Script para configurar ambiente de desenvolvimento
+
+set -e
+
+echo "🚀 Configurando ambiente de desenvolvimento Edge Video..."
+
+# Verifica se uv está instalado
+if ! command -v uv &> /dev/null; then
+    echo "❌ uv não encontrado. Instale o uv primeiro:"
+    echo "curl -LsSf https://astral.sh/uv/install.sh | sh"
+    exit 1
+fi
+
+# Sincroniza dependências
+echo "📦 Instalando dependências..."
+uv sync --dev
+
+# Executa testes
+echo "🧪 Executando testes..."
+uv run pytest --cov=src --cov-report=term-missing
+
+# Executa linting
+echo "🔍 Executando linting..."
+uv run ruff check src/
+uv run ruff format --check src/
+
+echo "✅ Ambiente configurado com sucesso!"
+echo ""
+echo "📝 Comandos úteis:"
+echo "  uv run pytest               # Executar testes"
+echo "  uv run pytest --cov=src     # Testes com cobertura"
+echo "  uv run ruff check src/       # Verificar código"
+echo "  uv run ruff format src/      # Formatar código"
+echo "  uv run python main_refactored.py  # Executar aplicação"
+</file>
+
+<file path=".github/workflows/build-and-push.yml">
+name: Docker CI/CD para GitHub Container Registry
+
+on:
+  push:
+    branches:
+      - main
+  release:
+    types: [published, created]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      # 1. Configurar Docker Buildx
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 2. Fazer login no GitHub Container Registry
+      - name: Login no GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. Converter nome do repositório para minúsculas
+      - name: Converter repositório para minúsculas
+        run: |
+          echo "IMAGE_NAME_LC=${IMAGE_NAME,,}" >> $GITHUB_ENV
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+
+      # 4. Definir tags manualmente
+      - name: Definir tags da imagem
+        id: tags
+        run: |
+          IMAGE_BASE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}"
+          
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            # Para releases: versão + latest
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION=${VERSION#v}  # Remove 'v' se existir
+            echo "TAGS=${IMAGE_BASE}:${VERSION},${IMAGE_BASE}:latest" >> $GITHUB_ENV
+          else
+            # Para push normal: branch + latest (se for main)
+            if [[ "${{ github.ref_name }}" == "main" ]]; then
+              echo "TAGS=${IMAGE_BASE}:main,${IMAGE_BASE}:latest" >> $GITHUB_ENV
+            else
+              echo "TAGS=${IMAGE_BASE}:${{ github.ref_name }}" >> $GITHUB_ENV
+            fi
+          fi
+
+      # 5. Construir e enviar imagem Docker
+      - name: Construir e enviar imagem Docker
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.TAGS }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Push da imagem bem-sucedido
+        run: |
+          echo "✅ Imagens Docker enviadas para o GitHub Container Registry:"
+          echo ""
+          echo "🏷️ Tags criadas:"
+          echo "${{ env.TAGS }}" | tr ',' '\n' | sed 's/^/  - /'
+          echo ""
+          echo "🚀 Deploy pronto!"
+          echo "📖 Para usar: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
 </file>
 
 <file path="internal/mq/amqp.go">
@@ -469,6 +3074,1128 @@ func Decompress(data []byte) ([]byte, error) {
 }
 </file>
 
+<file path=".env.example">
+# Exemplo de arquivo .env para configuração do Edge Video
+
+# Caminho para o arquivo config.yaml
+# Pode ser um caminho relativo ou absoluto
+# Padrão: ./config.yaml (pasta atual)
+CONFIG_PATH=./config.yaml
+
+# RabbitMQ Configuration
+RABBITMQ_HOST=localhost
+RABBITMQ_PORT=5672
+RABBITMQ_VHOST=guard_vhost
+RABBITMQ_USER=user
+RABBITMQ_PASS=password
+
+# Exchange Configuration
+EXCHANGE_NAME=carnes_nobres
+ROUTING_KEY=camera.#
+QUEUE_NAME=test_consumer_queue
+
+# Development Configuration
+DEBUG=true
+LOG_LEVEL=INFO
+
+# Exemplos de uso:
+# CONFIG_PATH=./config.yaml                          # Pasta atual (padrão)
+# CONFIG_PATH=/etc/edge-video/config.yaml           # Caminho absoluto
+# CONFIG_PATH=~/cameras/config.yaml                 # Home do usuário
+# CONFIG_PATH=/mnt/storage/configs/config.yaml      # Storage montado
+</file>
+
+<file path=".gitignore">
+# Created by https://www.toptal.com/developers/gitignore/api/go,vs,visualstudio,pycharm,pycharm+iml,pycharm+all,goland,goland+all,goland+iml
+# Edit at https://www.toptal.com/developers/gitignore?templates=go,vs,visualstudio,pycharm,pycharm+iml,pycharm+all,goland,goland+all,goland+iml
+
+### Go ###
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+#
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+### GoLand ###
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+# User-specific stuff
+.idea/**/workspace.xml
+.idea/**/tasks.xml
+.idea/**/usage.statistics.xml
+.idea/**/dictionaries
+.idea/**/shelf
+
+# AWS User-specific
+.idea/**/aws.xml
+
+# Generated files
+.idea/**/contentModel.xml
+
+# Sensitive or high-churn files
+.idea/**/dataSources/
+.idea/**/dataSources.ids
+.idea/**/dataSources.local.xml
+.idea/**/sqlDataSources.xml
+.idea/**/dynamic.xml
+.idea/**/uiDesigner.xml
+.idea/**/dbnavigator.xml
+
+# Gradle
+.idea/**/gradle.xml
+.idea/**/libraries
+
+# Gradle and Maven with auto-import
+# When using Gradle or Maven with auto-import, you should exclude module files,
+# since they will be recreated, and may cause churn.  Uncomment if using
+# auto-import.
+# .idea/artifacts
+# .idea/compiler.xml
+# .idea/jarRepositories.xml
+# .idea/modules.xml
+# .idea/*.iml
+# .idea/modules
+# *.iml
+# *.ipr
+
+# CMake
+cmake-build-*/
+
+# Mongo Explorer plugin
+.idea/**/mongoSettings.xml
+
+# File-based project format
+*.iws
+
+# IntelliJ
+out/
+
+# mpeltonen/sbt-idea plugin
+.idea_modules/
+
+# JIRA plugin
+atlassian-ide-plugin.xml
+
+# Cursive Clojure plugin
+.idea/replstate.xml
+
+# SonarLint plugin
+.idea/sonarlint/
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties
+
+# Editor-based Rest Client
+.idea/httpRequests
+
+# Android studio 3.1+ serialized cache file
+.idea/caches/build_file_checksums.ser
+
+### GoLand Patch ###
+# Comment Reason: https://github.com/joeblau/gitignore.io/issues/186#issuecomment-215987721
+
+# *.iml
+# modules.xml
+# .idea/misc.xml
+# *.ipr
+
+# Sonarlint plugin
+# https://plugins.jetbrains.com/plugin/7973-sonarlint
+.idea/**/sonarlint/
+
+# SonarQube Plugin
+# https://plugins.jetbrains.com/plugin/7238-sonarqube-community-plugin
+.idea/**/sonarIssues.xml
+
+# Markdown Navigator plugin
+# https://plugins.jetbrains.com/plugin/7896-markdown-navigator-enhanced
+.idea/**/markdown-navigator.xml
+.idea/**/markdown-navigator-enh.xml
+.idea/**/markdown-navigator/
+
+# Cache file creation bug
+# See https://youtrack.jetbrains.com/issue/JBR-2257
+.idea/$CACHE_FILE$
+
+# CodeStream plugin
+# https://plugins.jetbrains.com/plugin/12206-codestream
+.idea/codestream.xml
+
+# Azure Toolkit for IntelliJ plugin
+# https://plugins.jetbrains.com/plugin/8053-azure-toolkit-for-intellij
+.idea/**/azureSettings.xml
+
+### GoLand+all ###
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+# User-specific stuff
+
+# AWS User-specific
+
+# Generated files
+
+# Sensitive or high-churn files
+
+# Gradle
+
+# Gradle and Maven with auto-import
+# When using Gradle or Maven with auto-import, you should exclude module files,
+# since they will be recreated, and may cause churn.  Uncomment if using
+# auto-import.
+# .idea/artifacts
+# .idea/compiler.xml
+# .idea/jarRepositories.xml
+# .idea/modules.xml
+# .idea/*.iml
+# .idea/modules
+# *.iml
+# *.ipr
+
+# CMake
+
+# Mongo Explorer plugin
+
+# File-based project format
+
+# IntelliJ
+
+# mpeltonen/sbt-idea plugin
+
+# JIRA plugin
+
+# Cursive Clojure plugin
+
+# SonarLint plugin
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+
+# Editor-based Rest Client
+
+# Android studio 3.1+ serialized cache file
+
+### GoLand+all Patch ###
+# Ignore everything but code style settings and run configurations
+# that are supposed to be shared within teams.
+
+.idea/*
+
+!.idea/codeStyles
+!.idea/runConfigurations
+
+### GoLand+iml ###
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+# User-specific stuff
+
+# AWS User-specific
+
+# Generated files
+
+# Sensitive or high-churn files
+
+# Gradle
+
+# Gradle and Maven with auto-import
+# When using Gradle or Maven with auto-import, you should exclude module files,
+# since they will be recreated, and may cause churn.  Uncomment if using
+# auto-import.
+# .idea/artifacts
+# .idea/compiler.xml
+# .idea/jarRepositories.xml
+# .idea/modules.xml
+# .idea/*.iml
+# .idea/modules
+# *.iml
+# *.ipr
+
+# CMake
+
+# Mongo Explorer plugin
+
+# File-based project format
+
+# IntelliJ
+
+# mpeltonen/sbt-idea plugin
+
+# JIRA plugin
+
+# Cursive Clojure plugin
+
+# SonarLint plugin
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+
+# Editor-based Rest Client
+
+# Android studio 3.1+ serialized cache file
+
+### GoLand+iml Patch ###
+# Reason: https://github.com/joeblau/gitignore.io/issues/186#issuecomment-249601023
+
+*.iml
+modules.xml
+.idea/misc.xml
+*.ipr
+
+### PyCharm ###
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+# User-specific stuff
+
+# AWS User-specific
+
+# Generated files
+
+# Sensitive or high-churn files
+
+# Gradle
+
+# Gradle and Maven with auto-import
+# When using Gradle or Maven with auto-import, you should exclude module files,
+# since they will be recreated, and may cause churn.  Uncomment if using
+# auto-import.
+# .idea/artifacts
+# .idea/compiler.xml
+# .idea/jarRepositories.xml
+# .idea/modules.xml
+# .idea/*.iml
+# .idea/modules
+# *.iml
+# *.ipr
+
+# CMake
+
+# Mongo Explorer plugin
+
+# File-based project format
+
+# IntelliJ
+
+# mpeltonen/sbt-idea plugin
+
+# JIRA plugin
+
+# Cursive Clojure plugin
+
+# SonarLint plugin
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+
+# Editor-based Rest Client
+
+# Android studio 3.1+ serialized cache file
+
+### PyCharm Patch ###
+# Comment Reason: https://github.com/joeblau/gitignore.io/issues/186#issuecomment-215987721
+
+# *.iml
+# modules.xml
+# .idea/misc.xml
+# *.ipr
+
+# Sonarlint plugin
+# https://plugins.jetbrains.com/plugin/7973-sonarlint
+
+# SonarQube Plugin
+# https://plugins.jetbrains.com/plugin/7238-sonarqube-community-plugin
+
+# Markdown Navigator plugin
+# https://plugins.jetbrains.com/plugin/7896-markdown-navigator-enhanced
+
+# Cache file creation bug
+# See https://youtrack.jetbrains.com/issue/JBR-2257
+
+# CodeStream plugin
+# https://plugins.jetbrains.com/plugin/12206-codestream
+
+# Azure Toolkit for IntelliJ plugin
+# https://plugins.jetbrains.com/plugin/8053-azure-toolkit-for-intellij
+
+### PyCharm+all ###
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+# User-specific stuff
+
+# AWS User-specific
+
+# Generated files
+
+# Sensitive or high-churn files
+
+# Gradle
+
+# Gradle and Maven with auto-import
+# When using Gradle or Maven with auto-import, you should exclude module files,
+# since they will be recreated, and may cause churn.  Uncomment if using
+# auto-import.
+# .idea/artifacts
+# .idea/compiler.xml
+# .idea/jarRepositories.xml
+# .idea/modules.xml
+# .idea/*.iml
+# .idea/modules
+# *.iml
+# *.ipr
+
+# CMake
+
+# Mongo Explorer plugin
+
+# File-based project format
+
+# IntelliJ
+
+# mpeltonen/sbt-idea plugin
+
+# JIRA plugin
+
+# Cursive Clojure plugin
+
+# SonarLint plugin
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+
+# Editor-based Rest Client
+
+# Android studio 3.1+ serialized cache file
+
+### PyCharm+all Patch ###
+# Ignore everything but code style settings and run configurations
+# that are supposed to be shared within teams.
+
+
+
+### PyCharm+iml ###
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+# User-specific stuff
+
+# AWS User-specific
+
+# Generated files
+
+# Sensitive or high-churn files
+
+# Gradle
+
+# Gradle and Maven with auto-import
+# When using Gradle or Maven with auto-import, you should exclude module files,
+# since they will be recreated, and may cause churn.  Uncomment if using
+# auto-import.
+# .idea/artifacts
+# .idea/compiler.xml
+# .idea/jarRepositories.xml
+# .idea/modules.xml
+# .idea/*.iml
+# .idea/modules
+# *.iml
+# *.ipr
+
+# CMake
+
+# Mongo Explorer plugin
+
+# File-based project format
+
+# IntelliJ
+
+# mpeltonen/sbt-idea plugin
+
+# JIRA plugin
+
+# Cursive Clojure plugin
+
+# SonarLint plugin
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+
+# Editor-based Rest Client
+
+# Android studio 3.1+ serialized cache file
+
+### PyCharm+iml Patch ###
+# Reason: https://github.com/joeblau/gitignore.io/issues/186#issuecomment-249601023
+
+
+### vs ###
+## Ignore Visual Studio temporary files, build results, and
+## files generated by popular Visual Studio add-ons.
+##
+## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# User-specific files (MonoDevelop/Xamarin Studio)
+*.userprefs
+
+# Mono auto generated files
+mono_crash.*
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio 2015/2017 cache/options directory
+.vs/
+# Uncomment if you have tasks that create the project's static files in wwwroot
+#wwwroot/
+
+# Visual Studio 2017 auto generated files
+Generated\ Files/
+
+# MSTest test Results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+
+# NUnit
+*.VisualState.xml
+TestResult.xml
+nunit-*.xml
+
+# Build Results of an ATL Project
+[Dd]ebugPS/
+[Rr]eleasePS/
+dlldata.c
+
+# Benchmark Results
+BenchmarkDotNet.Artifacts/
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# StyleCop
+StyleCopReport.xml
+
+# Files built by Visual Studio
+*_i.c
+*_p.c
+*_h.h
+*.ilk
+*.meta
+*.obj
+*.iobj
+*.pch
+*.pdb
+*.ipdb
+*.pgc
+*.pgd
+*.rsp
+*.sbr
+*.tlb
+*.tli
+*.tlh
+*.tmp
+*.tmp_proj
+*_wpftmp.csproj
+*.log
+*.vspscc
+*.vssscc
+.builds
+*.pidb
+*.svclog
+*.scc
+
+# Chutzpah Test files
+_Chutzpah*
+
+# Visual C++ cache files
+ipch/
+*.aps
+*.ncb
+*.opendb
+*.opensdf
+*.sdf
+*.cachefile
+*.VC.db
+*.VC.VC.opendb
+
+# Visual Studio profiler
+*.psess
+*.vsp
+*.vspx
+*.sap
+
+# Visual Studio Trace Files
+*.e2e
+
+# TFS 2012 Local Workspace
+$tf/
+
+# Guidance Automation Toolkit
+*.gpState
+
+# ReSharper is a .NET coding add-in
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# TeamCity is a build add-in
+_TeamCity*
+
+# DotCover is a Code Coverage Tool
+*.dotCover
+
+# AxoCover is a Code Coverage Tool
+.axoCover/*
+!.axoCover/settings.json
+
+# Coverlet is a free, cross platform Code Coverage Tool
+coverage*[.json, .xml, .info]
+
+# Visual Studio code coverage results
+*.coverage
+*.coveragexml
+
+# NCrunch
+_NCrunch_*
+.*crunch*.local.xml
+nCrunchTemp_*
+
+# MightyMoose
+*.mm.*
+AutoTest.Net/
+
+# Web workbench (sass)
+.sass-cache/
+
+# Installshield output folder
+[Ee]xpress/
+
+# DocProject is a documentation generator add-in
+DocProject/buildhelp/
+DocProject/Help/*.HxT
+DocProject/Help/*.HxC
+DocProject/Help/*.hhc
+DocProject/Help/*.hhk
+DocProject/Help/*.hhp
+DocProject/Help/Html2
+DocProject/Help/html
+
+# Click-Once directory
+publish/
+
+# Publish Web Output
+*.[Pp]ublish.xml
+*.azurePubxml
+# Note: Comment the next line if you want to checkin your web deploy settings,
+# but database connection strings (with potential passwords) will be unencrypted
+*.pubxml
+*.publishproj
+
+# Microsoft Azure Web App publish settings. Comment the next line if you want to
+# checkin your Azure Web App publish settings, but sensitive information contained
+# in these scripts will be unencrypted
+PublishScripts/
+
+# NuGet Packages
+*.nupkg
+# NuGet Symbol Packages
+*.snupkg
+# The packages folder can be ignored because of Package Restore
+**/[Pp]ackages/*
+# except build/, which is used as an MSBuild target.
+!**/[Pp]ackages/build/
+# Uncomment if necessary however generally it will be regenerated when needed
+#!**/[Pp]ackages/repositories.config
+# NuGet v3's project.json files produces more ignorable files
+*.nuget.props
+*.nuget.targets
+
+# Microsoft Azure Build Output
+csx/
+*.build.csdef
+
+# Microsoft Azure Emulator
+ecf/
+rcf/
+
+# Windows Store app package directories and files
+AppPackages/
+BundleArtifacts/
+Package.StoreAssociation.xml
+_pkginfo.txt
+*.appx
+*.appxbundle
+*.appxupload
+
+# Visual Studio cache files
+# files ending in .cache can be ignored
+*.[Cc]ache
+# but keep track of directories ending in .cache
+!?*.[Cc]ache/
+
+# Others
+ClientBin/
+~$*
+*~
+*.dbmdl
+*.dbproj.schemaview
+*.jfm
+*.pfx
+*.publishsettings
+orleans.codegen.cs
+
+# Including strong name files can present a security risk
+# (https://github.com/github/gitignore/pull/2483#issue-259490424)
+#*.snk
+
+# Since there are multiple workflows, uncomment next line to ignore bower_components
+# (https://github.com/github/gitignore/pull/1529#issuecomment-104372622)
+#bower_components/
+
+# RIA/Silverlight projects
+Generated_Code/
+
+# Backup & report files from converting an old project file
+# to a newer Visual Studio version. Backup files are not needed,
+# because we have git ;-)
+_UpgradeReport_Files/
+Backup*/
+UpgradeLog*.XML
+UpgradeLog*.htm
+ServiceFabricBackup/
+*.rptproj.bak
+
+# SQL Server files
+*.mdf
+*.ldf
+*.ndf
+
+# Business Intelligence projects
+*.rdl.data
+*.bim.layout
+*.bim_*.settings
+*.rptproj.rsuser
+*- [Bb]ackup.rdl
+*- [Bb]ackup ([0-9]).rdl
+*- [Bb]ackup ([0-9][0-9]).rdl
+
+# Microsoft Fakes
+FakesAssemblies/
+
+# GhostDoc plugin setting file
+*.GhostDoc.xml
+
+# Node.js Tools for Visual Studio
+.ntvs_analysis.dat
+node_modules/
+
+# Visual Studio 6 build log
+*.plg
+
+# Visual Studio 6 workspace options file
+*.opt
+
+# Visual Studio 6 auto-generated workspace file (contains which files were open etc.)
+*.vbw
+
+# Visual Studio LightSwitch build output
+**/*.HTMLClient/GeneratedArtifacts
+**/*.DesktopClient/GeneratedArtifacts
+**/*.DesktopClient/ModelManifest.xml
+**/*.Server/GeneratedArtifacts
+**/*.Server/ModelManifest.xml
+_Pvt_Extensions
+
+# Paket dependency manager
+.paket/paket.exe
+paket-files/
+
+# FAKE - F# Make
+.fake/
+
+# CodeRush personal settings
+.cr/personal
+
+# Python Tools for Visual Studio (PTVS)
+__pycache__/
+*.pyc
+
+# Cake - Uncomment if you are using it
+# tools/**
+# !tools/packages.config
+
+# Tabs Studio
+*.tss
+
+# Telerik's JustMock configuration file
+*.jmconfig
+
+# BizTalk build output
+*.btp.cs
+*.btm.cs
+*.odx.cs
+*.xsd.cs
+
+# OpenCover UI analysis results
+OpenCover/
+
+# Azure Stream Analytics local run output
+ASALocalRun/
+
+# MSBuild Binary and Structured Log
+*.binlog
+
+# NVidia Nsight GPU debugger configuration file
+*.nvuser
+
+# MFractors (Xamarin productivity tool) working folder
+.mfractor/
+
+# Local History for Visual Studio
+.localhistory/
+
+# BeatPulse healthcheck temp database
+healthchecksdb
+
+# Backup folder for Package Reference Convert tool in Visual Studio 2017
+MigrationBackup/
+
+# Ionide (cross platform F# VS Code tools) working folder
+.ionide/
+
+### VisualStudio ###
+## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
+
+# User-specific files
+
+# User-specific files (MonoDevelop/Xamarin Studio)
+
+# Mono auto generated files
+
+# Build results
+[Ww][Ii][Nn]32/
+
+# Visual Studio 2015/2017 cache/options directory
+# Uncomment if you have tasks that create the project's static files in wwwroot
+
+# Visual Studio 2017 auto generated files
+
+# MSTest test Results
+
+# NUnit
+
+# Build Results of an ATL Project
+
+# Benchmark Results
+
+# .NET Core
+
+# ASP.NET Scaffolding
+ScaffoldingReadMe.txt
+
+# StyleCop
+
+# Files built by Visual Studio
+*.tlog
+
+# Chutzpah Test files
+
+# Visual C++ cache files
+
+# Visual Studio profiler
+
+# Visual Studio Trace Files
+
+# TFS 2012 Local Workspace
+
+# Guidance Automation Toolkit
+
+# ReSharper is a .NET coding add-in
+
+# TeamCity is a build add-in
+
+# DotCover is a Code Coverage Tool
+
+# AxoCover is a Code Coverage Tool
+
+# Coverlet is a free, cross platform Code Coverage Tool
+coverage*.json
+coverage*.xml
+coverage*.info
+
+# Visual Studio code coverage results
+
+# NCrunch
+
+# MightyMoose
+
+# Web workbench (sass)
+
+# Installshield output folder
+
+# DocProject is a documentation generator add-in
+
+# Click-Once directory
+
+# Publish Web Output
+# Note: Comment the next line if you want to checkin your web deploy settings,
+# but database connection strings (with potential passwords) will be unencrypted
+
+# Microsoft Azure Web App publish settings. Comment the next line if you want to
+# checkin your Azure Web App publish settings, but sensitive information contained
+# in these scripts will be unencrypted
+
+# NuGet Packages
+# NuGet Symbol Packages
+# The packages folder can be ignored because of Package Restore
+# except build/, which is used as an MSBuild target.
+# Uncomment if necessary however generally it will be regenerated when needed
+# NuGet v3's project.json files produces more ignorable files
+
+# Microsoft Azure Build Output
+
+# Microsoft Azure Emulator
+
+# Windows Store app package directories and files
+
+# Visual Studio cache files
+# files ending in .cache can be ignored
+# but keep track of directories ending in .cache
+
+# Others
+
+# Including strong name files can present a security risk
+# (https://github.com/github/gitignore/pull/2483#issue-259490424)
+
+# Since there are multiple workflows, uncomment next line to ignore bower_components
+# (https://github.com/github/gitignore/pull/1529#issuecomment-104372622)
+
+# RIA/Silverlight projects
+
+# Backup & report files from converting an old project file
+# to a newer Visual Studio version. Backup files are not needed,
+# because we have git ;-)
+
+# SQL Server files
+
+# Business Intelligence projects
+
+# Microsoft Fakes
+
+# GhostDoc plugin setting file
+
+# Node.js Tools for Visual Studio
+
+# Visual Studio 6 build log
+
+# Visual Studio 6 workspace options file
+
+# Visual Studio 6 auto-generated workspace file (contains which files were open etc.)
+
+# Visual Studio 6 auto-generated project file (contains which files were open etc.)
+*.vbp
+
+# Visual Studio 6 workspace and project file (working project files containing files to include in project)
+*.dsw
+*.dsp
+
+# Visual Studio 6 technical files
+
+# Visual Studio LightSwitch build output
+
+# Paket dependency manager
+
+# FAKE - F# Make
+
+# CodeRush personal settings
+
+# Python Tools for Visual Studio (PTVS)
+
+# Cake - Uncomment if you are using it
+# tools/**
+# !tools/packages.config
+
+# Tabs Studio
+
+# Telerik's JustMock configuration file
+
+# BizTalk build output
+
+# OpenCover UI analysis results
+
+# Azure Stream Analytics local run output
+
+# MSBuild Binary and Structured Log
+
+# NVidia Nsight GPU debugger configuration file
+
+# MFractors (Xamarin productivity tool) working folder
+
+# Local History for Visual Studio
+
+# Visual Studio History (VSHistory) files
+.vshistory/
+
+# BeatPulse healthcheck temp database
+
+# Backup folder for Package Reference Convert tool in Visual Studio 2017
+
+# Ionide (cross platform F# VS Code tools) working folder
+
+# Fody - auto-generated XML schema
+FodyWeavers.xsd
+
+# VS Code files for those working on multiple tools
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# Local History for Visual Studio Code
+.history/
+
+# Windows Installer files from build outputs
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+
+# JetBrains Rider
+*.sln.iml
+
+### VisualStudio Patch ###
+# Additional files built by Visual Studio
+
+# End of https://www.toptal.com/developers/gitignore/api/go,vs,visualstudio,pycharm,pycharm+iml,pycharm+all,goland,goland+all,goland+iml
+</file>
+
+<file path=".python-version">
+3.11
+</file>
+
+<file path="run-docker.sh">
+#!/bin/bash
+# Script para executar o Edge Video usando Docker Run
+# Uso: ./run-docker.sh /path/para/config.yaml
+
+set -e
+
+# Cores para output
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Parâmetros
+CONFIG_PATH=${1:-"$(pwd)/config.yaml"}
+RABBITMQ_USER=${RABBITMQ_USER:-"user"}
+RABBITMQ_PASS=${RABBITMQ_PASS:-"password"}
+RABBITMQ_VHOST=${RABBITMQ_VHOST:-"guard_vhost"}
+NETWORK_NAME="edge-video-net"
+RABBITMQ_CONTAINER="rabbitmq"
+COLLECTOR_CONTAINER="camera-collector"
+
+echo -e "${GREEN}=== Edge Video - Docker Run Setup ===${NC}"
+
+# Verifica se o config existe
+if [ ! -f "$CONFIG_PATH" ]; then
+    echo -e "${YELLOW}Erro: Config file não encontrado em: $CONFIG_PATH${NC}"
+    echo "Uso: $0 /path/para/config.yaml"
+    exit 1
+fi
+
+echo -e "${GREEN}[1/5] Usando config: $CONFIG_PATH${NC}"
+
+# Cria a rede se não existir
+if ! docker network inspect $NETWORK_NAME >/dev/null 2>&1; then
+    echo -e "${GREEN}[2/5] Criando rede Docker: $NETWORK_NAME${NC}"
+    docker network create $NETWORK_NAME
+else
+    echo -e "${GREEN}[2/5] Rede $NETWORK_NAME já existe${NC}"
+fi
+
+# Remove containers antigos se existirem
+echo -e "${GREEN}[3/5] Limpando containers antigos...${NC}"
+docker rm -f $RABBITMQ_CONTAINER 2>/dev/null || true
+docker rm -f $COLLECTOR_CONTAINER 2>/dev/null || true
+
+# Inicia RabbitMQ
+echo -e "${GREEN}[4/5] Iniciando RabbitMQ...${NC}"
+docker run -d \
+  --name $RABBITMQ_CONTAINER \
+  --network $NETWORK_NAME \
+  -p 5672:5672 \
+  -p 15672:15672 \
+  -e RABBITMQ_DEFAULT_USER=$RABBITMQ_USER \
+  -e RABBITMQ_DEFAULT_PASS=$RABBITMQ_PASS \
+  -e RABBITMQ_DEFAULT_VHOST=$RABBITMQ_VHOST \
+  rabbitmq:3.13-management-alpine
+
+# Aguarda RabbitMQ iniciar
+echo -e "${YELLOW}Aguardando RabbitMQ iniciar...${NC}"
+sleep 10
+
+# Inicia Camera Collector
+echo -e "${GREEN}[5/5] Iniciando Camera Collector...${NC}"
+docker run -d \
+  --name $COLLECTOR_CONTAINER \
+  --network $NETWORK_NAME \
+  --restart unless-stopped \
+  -v "$CONFIG_PATH:/app/config.yaml:ro" \
+  t3labs/edge-video:latest
+
+echo ""
+echo -e "${GREEN}=== Setup Completo! ===${NC}"
+echo ""
+echo "Serviços rodando:"
+echo "  - RabbitMQ Management: http://localhost:15672 (user: $RABBITMQ_USER, pass: $RABBITMQ_PASS)"
+echo "  - AMQP Port: localhost:5672"
+echo ""
+echo "Comandos úteis:"
+echo "  docker logs -f $COLLECTOR_CONTAINER  # Ver logs do collector"
+echo "  docker logs -f $RABBITMQ_CONTAINER   # Ver logs do RabbitMQ"
+echo "  docker stop $COLLECTOR_CONTAINER $RABBITMQ_CONTAINER  # Parar serviços"
+echo "  docker rm $COLLECTOR_CONTAINER $RABBITMQ_CONTAINER    # Remover containers"
+echo ""
+</file>
+
 <file path="docker-compose.yml">
 version: '3.8'
 
@@ -478,8 +4205,8 @@ services:
     container_name: camera-collector
     restart: unless-stopped
     volumes:
-      # Monta o config.yaml para facilitar a alteração sem reconstruir a imagem
-      - ./config.yaml:/app/config.yaml
+      # Monta o config.yaml (pode ser customizado via variável de ambiente)
+      - ${CONFIG_PATH:-./config.yaml}:/app/config.yaml
     depends_on:
       - rabbitmq
     # Opcional: descomente se precisar que a rede do host seja usada
@@ -505,74 +4232,6 @@ volumes:
   rabbitmq_data:
 </file>
 
-<file path="Dockerfile">
-# Stage 1: Build
-FROM golang:1.24-alpine AS builder
-
-WORKDIR /app
-
-# Copiar go.mod e go.sum e baixar dependências
-COPY go.mod go.sum ./
-RUN go mod download
-
-# Copiar o código fonte
-COPY . .
-
-# Construir a aplicação
-# O build para linux/amd64 é o padrão, mas podemos ser explícitos
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /camera-collector main.go
-
-# Stage 2: Final image
-FROM alpine:latest
-
-WORKDIR /app
-
-# Copiar o binário construído
-COPY --from=builder /camera-collector .
-
-# Copiar o arquivo de configuração
-COPY config.yaml .
-
-# Expor a porta se a aplicação tiver um servidor web (opcional)
-# EXPOSE 8080
-
-# Comando para iniciar a aplicação
-CMD ["./camera-collector"]
-</file>
-
-<file path="go.mod">
-module edge_guard_ai
-
-go 1.24.0
-
-toolchain go1.24.9
-
-require (
-	github.com/eclipse/paho.mqtt.golang v1.5.1
-	github.com/klauspost/compress v1.18.1
-	github.com/spf13/viper v1.21.0
-	github.com/streadway/amqp v1.1.0
-)
-
-require (
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
-	github.com/sagikazarmark/locafero v0.11.0 // indirect
-	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
-	github.com/spf13/afero v1.15.0 // indirect
-	github.com/spf13/cast v1.10.0 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
-	github.com/subosito/gotenv v1.6.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/net v0.44.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/sys v0.36.0 // indirect
-	golang.org/x/text v0.29.0 // indirect
-)
-</file>
-
 <file path="main.go">
 package main
 
@@ -584,9 +4243,9 @@ import (
 	"syscall"
 	"time"
 
-	"edge_guard_ai/internal/camera"
-	"edge_guard_ai/internal/mq"
-	"edge_guard_ai/internal/util"
+	"github.com/T3-Labs/edge-video/internal/camera"
+	"github.com/T3-Labs/edge-video/internal/mq"
+	"github.com/T3-Labs/edge-video/internal/util"
 
 	"github.com/spf13/viper"
 )
@@ -692,24 +4351,328 @@ time.Sleep(500 * time.Millisecond)
 }
 </file>
 
+<file path="pyproject.toml">
+[project]
+name = "edge-guard-ai"
+version = "0.1.0"
+description = "Edge video processing system with RabbitMQ integration"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "opencv-python>=4.12.0.88",
+    "pika>=1.3.2",
+    "zstandard>=0.25.0",
+    "numpy>=1.24.0",
+]
+
+[project.urls]
+repository = "https://github.com/T3-Labs/edge-video.git"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "ruff>=0.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "-v"
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+</file>
+
+<file path="test_consumer.py">
+import pika
+import sys
+import os
+import cv2
+import numpy as np
+
+RABBITMQ_HOST = 'localhost'
+RABBITMQ_PORT = 5672
+RABBITMQ_VHOST = 'guard_vhost'
+RABBITMQ_USER = 'user'
+RABBITMQ_PASS = 'password'
+EXCHANGE_NAME = 'carnes_nobres'
+ROUTING_KEY = 'camera.#'
+QUEUE_NAME = 'test_consumer_queue'
+
+camera_windows = {}
+camera_frames = {}  # Armazena os últimos frames de cada câmera
+
+def on_message_received(ch, method, properties, body):
+    camera_id = method.routing_key.replace('camera.', '')  # Limpa o prefixo
+    print(f" [x] Recebido frame da câmera '{camera_id}'. Tamanho: {len(body)} bytes")
+
+    # Decodifica o frame como imagem (JPEG/PNG) sem descompressão
+    try:
+        np_arr = np.frombuffer(body, np.uint8)
+        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if img is not None:
+            camera_frames[camera_id] = img
+            camera_windows[camera_id] = True
+        else:
+            print(f" [!] Não foi possível decodificar o frame da câmera '{camera_id}'.")
+    except Exception as e:
+        print(f" [!] Erro ao decodificar imagem da câmera '{camera_id}': {e}")
+
+def main():
+    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
+    parameters = pika.ConnectionParameters(
+        host=RABBITMQ_HOST,
+        port=RABBITMQ_PORT,
+        virtual_host=RABBITMQ_VHOST,
+        credentials=credentials
+    )
+
+    try:
+        connection = pika.BlockingConnection(parameters)
+        channel = connection.channel()
+        channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type='topic', durable=True)
+        result = channel.queue_declare(queue=QUEUE_NAME, exclusive=True, durable=False)
+        queue_name = result.method.queue
+        print(f"[*] Fila '{queue_name}' criada. Aguardando por frames...")
+        channel.queue_bind(exchange=EXCHANGE_NAME, queue=queue_name, routing_key=ROUTING_KEY)
+        channel.basic_consume(queue=queue_name, on_message_callback=on_message_received, auto_ack=True)
+
+        print("[INFO] Pressione 'q' em qualquer janela para sair.")
+        while True:
+            try:
+                channel.connection.process_data_events(time_limit=0.1)
+                
+                # Concatena os frames em uma grade 2x3 (6 câmeras)
+                if len(camera_frames) > 0:
+                    # Cria uma lista ordenada de frames
+                    cam_ids = sorted(camera_frames.keys())
+                    frames_list = []
+                    
+                    for cam_id in cam_ids[:6]:  # Limita a 6 câmeras
+                        frame = camera_frames[cam_id]
+                        # Redimensiona para 640x480 para uniformidade
+                        resized = cv2.resize(frame, (640, 480))
+                        # Adiciona texto com o ID da câmera
+                        cv2.putText(resized, cam_id, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+                                    1, (0, 255, 0), 2, cv2.LINE_AA)
+                        frames_list.append(resized)
+                    
+                    # Preenche com frames pretos se houver menos de 6 câmeras
+                    while len(frames_list) < 6:
+                        black_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                        cv2.putText(black_frame, f"Cam{len(frames_list)+1}", (250, 240), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+                        frames_list.append(black_frame)
+                    
+                    # Concatena em grade 2x3
+                    row1 = np.hstack(frames_list[0:3])
+                    row2 = np.hstack(frames_list[3:6])
+                    grid = np.vstack([row1, row2])
+                    
+                    cv2.imshow('Cameras Grid (2x3)', grid)
+                
+                # Verifica se a tecla 'q' foi pressionada
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    print("Saindo por comando do usuário.")
+                    break
+            except KeyboardInterrupt:
+                print('Interrompido pelo usuário. Encerrando.')
+                break
+        cv2.destroyAllWindows()
+
+    except pika.exceptions.AMQPConnectionError as e:
+        print(f"Erro de conexão com o RabbitMQ: {e}")
+        print("Verifique se o host, porta, vhost e credenciais estão corretos e se o contêiner do RabbitMQ está em execução.")
+    except KeyboardInterrupt:
+        print('Interrompido pelo usuário. Encerrando.')
+        try:
+            sys.exit(0)
+        except SystemExit:
+            os._exit(0)
+
+if __name__ == '__main__':
+    main()
+</file>
+
+<file path="internal/camera/camera.go">
+package camera
+
+import (
+	"bytes"
+	"context"
+	"log"
+	"os/exec"
+	"time"
+
+	"github.com/T3-Labs/edge-video/internal/mq"
+	"github.com/T3-Labs/edge-video/internal/util"
+)
+
+type CameraConfig struct {
+	ID  string
+	URL string
+}
+
+type Capture struct {
+	ctx        context.Context
+	config     CameraConfig
+	interval   time.Duration
+	compressor *util.Compressor
+	publisher  mq.Publisher
+}
+
+func NewCapture(ctx context.Context, config CameraConfig, interval time.Duration, compressor *util.Compressor, publisher mq.Publisher) *Capture {
+	return &Capture{
+		ctx:        ctx,
+		config:     config,
+		interval:   interval,
+		compressor: compressor,
+		publisher:  publisher,
+	}
+}
+
+func (c *Capture) Start() {
+	go func() {
+		ticker := time.NewTicker(c.interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-c.ctx.Done():
+				log.Printf("parando captura para camera %s", c.config.ID)
+				return
+			case <-ticker.C:
+				c.captureAndPublish()
+			}
+		}
+	}()
+}
+
+func (c *Capture) captureAndPublish() {
+	// Captura um frame da câmera RTSP usando FFmpeg
+	// Comando: ffmpeg -rtsp_transport tcp -i <URL> -frames:v 1 -f image2pipe -vcodec mjpeg -
+	cmd := exec.CommandContext(
+		c.ctx,
+		"ffmpeg",
+		"-rtsp_transport", "tcp",
+		"-i", c.config.URL,
+		"-frames:v", "1",
+		"-f", "image2pipe",
+		"-vcodec", "mjpeg",
+		"-q:v", "5",
+		"-",
+	)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		log.Printf("erro ao capturar frame da câmera %s: %v (stderr: %s)", c.config.ID, err, stderr.String())
+		return
+	}
+
+	frameData := stdout.Bytes()
+	if len(frameData) == 0 {
+		log.Printf("frame vazio capturado da câmera %s", c.config.ID)
+		return
+	}
+
+	log.Printf("capturado frame da camera %s (%d bytes)", c.config.ID, len(frameData))
+
+	// Publica o frame JPEG no RabbitMQ
+	err = c.publisher.Publish(c.ctx, c.config.ID, frameData)
+	if err != nil {
+		log.Printf("erro ao publicar frame da câmera %s: %v", c.config.ID, err)
+	}
+}
+</file>
+
+<file path="go.mod">
+module github.com/T3-Labs/edge-video
+
+go 1.24.0
+
+toolchain go1.24.9
+
+require (
+	github.com/disintegration/imaging v1.6.2
+	github.com/eclipse/paho.mqtt.golang v1.5.1
+	github.com/klauspost/compress v1.18.1
+	github.com/spf13/viper v1.21.0
+	github.com/streadway/amqp v1.1.0
+)
+
+require (
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
+	github.com/sagikazarmark/locafero v0.11.0 // indirect
+	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
+	github.com/spf13/afero v1.15.0 // indirect
+	github.com/spf13/cast v1.10.0 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/subosito/gotenv v1.6.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	golang.org/x/net v0.44.0 // indirect
+	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/sys v0.36.0 // indirect
+	golang.org/x/text v0.29.0 // indirect
+)
+</file>
+
 <file path="config.yaml">
 interval_ms: 500
 protocol: amqp # amqp | mqtt
 
-process_every_n_frames: 3 # Processa 1 a cada 3 frames (ex: 30fps -> 10fps)
+process_every_n_frames: 1 # Processa 1 a cada 1 frames (ex: 30fps -> 30fps)
 
 amqp:
   amqp_url: "amqp://user:password@rabbitmq:5672/guard_vhost"
-  exchange: "cameras"
+  exchange: "carnes_nobres_exchange"
   routing_key_prefix: "camera."
 
 mqtt:
   broker: "tcp://localhost:1883"
   topic_prefix: "camera/"
 
-compression:
-  enabled: true
-  level: 3
 
 cameras:
   - id: "cam1"
@@ -722,6 +4685,43 @@ cameras:
     url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=4&subtype=0"
   - id: "cam5"
     url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=5&subtype=0"
+</file>
+
+<file path="Dockerfile">
+# Stage 1: Build
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+
+# Copiar go.mod e go.sum
+COPY go.mod go.sum ./
+
+# Copiar o código fonte para resolver dependências locais
+COPY . .
+
+# Baixar e sincronizar dependências
+RUN go mod download
+RUN go mod tidy
+
+# Construir a aplicação sem CGO
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /camera-collector main.go
+
+# Stage 2: Final image
+FROM alpine:latest
+
+# Instala FFmpeg para captura de streams RTSP
+RUN apk add --no-cache ffmpeg
+
+WORKDIR /app
+
+# Copiar o binário construído
+COPY --from=builder /camera-collector .
+
+# Nota: config.yaml será montado via volume no docker-compose.yml
+# Não é necessário copiá-lo para a imagem
+
+# Comando para iniciar a aplicação
+CMD ["./camera-collector"]
 </file>
 
 </files>
