@@ -6,8 +6,8 @@ services:
     container_name: camera-collector
     restart: unless-stopped
     volumes:
-      # Monta o config.yaml para facilitar a alteração sem reconstruir a imagem
-      - ./config.yaml:/app/config.yaml
+      # Monta o config.yaml (pode ser customizado via variável de ambiente)
+      - ${CONFIG_PATH:-./config.yaml}:/app/config.yaml
     depends_on:
       - rabbitmq
     # Opcional: descomente se precisar que a rede do host seja usada

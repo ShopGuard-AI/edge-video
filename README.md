@@ -109,7 +109,27 @@ cameras:
   # ... até 6 câmeras
 ```
 
+**Usando um caminho customizado para o config.yaml:**
+
+Você pode especificar um caminho diferente usando variável de ambiente:
+
+```bash
+# Opção 1: Definir no terminal
+export CONFIG_PATH=/etc/edge-video/config.yaml
+docker-compose up -d
+
+# Opção 2: Criar um arquivo .env
+cp .env.example .env
+# Edite o .env e defina: CONFIG_PATH=/seu/caminho/config.yaml
+docker-compose up -d
+
+# Opção 3: Inline
+CONFIG_PATH=/path/to/config.yaml docker-compose up -d
+```
+
 ### 2. Inicie os Serviços
+
+#### Opção A: Usando Docker Compose (Recomendado)
 
 ```bash
 docker-compose up -d --build
@@ -118,6 +138,89 @@ docker-compose up -d --build
 Isso iniciará:
 - **RabbitMQ**: Porta 5672 (AMQP) e 15672 (Management UI)
 - **Camera Collector**: Aplicação Go capturando e publicando frames
+
+#### Opção B: Usando Docker Run (Após Docker Pull)
+
+Se você baixou a imagem do Docker Hub com `docker pull`:
+
+```bash
+# 1. Inicie o RabbitMQ primeiro
+docker run -d \
+  --name rabbitmq \
+  -p 5672:5672 \
+  -p 15672:15672 \
+  -e RABBITMQ_DEFAULT_USER=user \
+  -e RABBITMQ_DEFAULT_PASS=password \
+  -e RABBITMQ_DEFAULT_VHOST=guard_vhost \
+  rabbitmq:3.13-management-alpine
+
+# 2. Baixe a imagem do Edge Video (se ainda não tiver)
+docker pull t3labs/edge-video:latest
+
+# 3. Execute o Camera Collector com seu config.yaml local
+docker run -d \
+  --name camera-collector \
+  --link rabbitmq:rabbitmq \
+  -v /path/absoluto/para/seu/config.yaml:/app/config.yaml \
+  t3labs/edge-video:latest
+```
+
+**Exemplos de caminhos para o volume:**
+
+```bash
+# Exemplo 1: Config.yaml na pasta atual
+docker run -d \
+  --name camera-collector \
+  --link rabbitmq:rabbitmq \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  t3labs/edge-video:latest
+
+# Exemplo 2: Config.yaml em /etc
+docker run -d \
+  --name camera-collector \
+  --link rabbitmq:rabbitmq \
+  -v /etc/edge-video/config.yaml:/app/config.yaml \
+  t3labs/edge-video:latest
+
+# Exemplo 3: Config.yaml no home do usuário
+docker run -d \
+  --name camera-collector \
+  --link rabbitmq:rabbitmq \
+  -v $HOME/.config/edge-video/config.yaml:/app/config.yaml \
+  t3labs/edge-video:latest
+
+# Exemplo 4: Config.yaml em storage montado
+docker run -d \
+  --name camera-collector \
+  --link rabbitmq:rabbitmq \
+  -v /mnt/storage/configs/cameras.yaml:/app/config.yaml \
+  t3labs/edge-video:latest
+```
+
+**Usando Docker Network (Melhor prática):**
+
+```bash
+# 1. Crie uma rede
+docker network create edge-video-net
+
+# 2. Inicie o RabbitMQ na rede
+docker run -d \
+  --name rabbitmq \
+  --network edge-video-net \
+  -p 5672:5672 \
+  -p 15672:15672 \
+  -e RABBITMQ_DEFAULT_USER=user \
+  -e RABBITMQ_DEFAULT_PASS=password \
+  -e RABBITMQ_DEFAULT_VHOST=guard_vhost \
+  rabbitmq:3.13-management-alpine
+
+# 3. Execute o Camera Collector na mesma rede
+docker run -d \
+  --name camera-collector \
+  --network edge-video-net \
+  -v /path/para/seu/config.yaml:/app/config.yaml \
+  t3labs/edge-video:latest
+```
 
 ### 3. Execute o Consumer Python
 
