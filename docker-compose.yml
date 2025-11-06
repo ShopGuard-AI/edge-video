@@ -28,6 +28,18 @@ services:
       timeout: 3s
       retries: 5
 
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: redisinsight
+    restart: always
+    ports:
+      - "5540:5540"
+    volumes:
+      - redisinsight_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+
   rabbitmq:
     image: "rabbitmq:3.13-management-alpine"
     container_name: rabbitmq
@@ -52,3 +64,4 @@ services:
 
 volumes:
   rabbitmq_data:
+  redisinsight_data:
