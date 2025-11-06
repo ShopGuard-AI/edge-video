@@ -311,6 +311,29 @@ cameras:
     url: "rtsp://..."
 ```
 
+### 🔄 Optional Redis Frame Storage + Metadata
+
+You can enable Redis frame caching and metadata publishing by updating `config.yaml`:
+
+```yaml
+redis:
+  enabled: true
+  address: "redis:6379"
+  ttl_seconds: 300
+  prefix: "frames"
+
+metadata:
+  enabled: true
+  exchange: "camera.metadata"
+  routing_key: "camera.metadata.event"
+```
+
+When enabled:
+
+- Frames are stored in Redis with TTL
+- Metadata messages are sent asynchronously to RabbitMQ
+- Existing video streaming and publishing are unaffected
+
 ## 🔍 Monitoramento
 
 ### RabbitMQ Management UI

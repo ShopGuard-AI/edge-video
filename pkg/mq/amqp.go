@@ -3,6 +3,7 @@ package mq
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/streadway/amqp"
@@ -13,22 +14,46 @@ type AMQPPublisher struct {
 	channel          *amqp.Channel
 	exchange         string
 	routingKeyPrefix string
+	amqpURL          string
 }
 
 func NewAMQPPublisher(amqpURL, exchange, routingKeyPrefix string) (*AMQPPublisher, error) {
-	conn, err := amqp.Dial(amqpURL)
+	publisher := &AMQPPublisher{
+		exchange:         exchange,
+		routingKeyPrefix: routingKeyPrefix,
+		amqpURL:          amqpURL,
+	}
+
+	// Tenta conectar com retry
+	var err error
+	maxRetries := 10
+	for i := 0; i < maxRetries; i++ {
+		err = publisher.connect()
+		if err == nil {
+			log.Printf("Conectado ao RabbitMQ com sucesso")
+			return publisher, nil
+		}
+		log.Printf("Tentativa %d/%d de conexão ao RabbitMQ falhou: %v. Tentando novamente em 5s...", i+1, maxRetries, err)
+		time.Sleep(5 * time.Second)
+	}
+
+	return nil, fmt.Errorf("falha ao conectar ao RabbitMQ após %d tentativas: %w", maxRetries, err)
+}
+
+func (p *AMQPPublisher) connect() error {
+	conn, err := amqp.Dial(p.amqpURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
+		return fmt.Errorf("failed to connect to RabbitMQ: %w", err)
 	}
 
 	ch, err := conn.Channel()
 	if err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("failed to open a channel: %w", err)
+		return fmt.Errorf("failed to open a channel: %w", err)
 	}
 
 	err = ch.ExchangeDeclare(
-		exchange,
+		p.exchange,
 		"topic",
 		true,
 		false,
@@ -39,15 +64,12 @@ func NewAMQPPublisher(amqpURL, exchange, routingKeyPrefix string) (*AMQPPublishe
 	if err != nil {
 		ch.Close()
 		conn.Close()
-		return nil, fmt.Errorf("failed to declare an exchange: %w", err)
+		return fmt.Errorf("failed to declare an exchange: %w", err)
 	}
 
-	return &AMQPPublisher{
-		conn:             conn,
-		channel:          ch,
-		exchange:         exchange,
-		routingKeyPrefix: routingKeyPrefix,
-	}, nil
+	p.conn = conn
+	p.channel = ch
+	return nil
 }
 
 func (p *AMQPPublisher) Publish(ctx context.Context, cameraID string, payload []byte) error {
@@ -76,4 +98,9 @@ func (p *AMQPPublisher) Close() error {
 		return p.conn.Close()
 	}
 	return nil
+}
+
+// GetChannel returns the underlying AMQP channel.
+func (p *AMQPPublisher) GetChannel() *amqp.Channel {
+	return p.channel
 }

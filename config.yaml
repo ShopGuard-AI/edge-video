@@ -1,7 +1,5 @@
-interval_ms: 500
+target_fps: 30 # FPS desejado para captura (frames por segundo)
 protocol: amqp # amqp | mqtt
-
-process_every_n_frames: 1 # Processa 1 a cada 1 frames (ex: 30fps -> 30fps)
 
 amqp:
   amqp_url: "amqp://user:password@rabbitmq:5672/guard_vhost"
@@ -24,3 +22,14 @@ cameras:
     url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=4&subtype=0"
   - id: "cam5"
     url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=5&subtype=0"
+
+redis:
+  enabled: true
+  address: "redis:6379"
+  ttl_seconds: 300
+  prefix: "frames"
+
+metadata:
+  enabled: true
+  exchange: "camera.metadata"
+  routing_key: "camera.metadata.event"

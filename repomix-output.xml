@@ -43,1602 +43,876 @@ The content is organized as follows:
 .github/
   workflows/
     build-and-push.yml
+cmd/
+  edge-video/
+    main.go
 internal/
+  metadata/
+    publisher.go
+  storage/
+    redis_store.go
+pkg/
   camera/
     camera.go
+  config/
+    config_test.go
+    config.go
   mq/
     amqp.go
     mqtt.go
+    publisher_mock.go
     publisher.go
   util/
     compress.go
-src/
-  config/
-    config_manager.py
-  consumer/
-    rabbitmq_consumer.py
-  display/
-    display_manager.py
-    video_processor.py
-  video_consumer_app.py
-tests/
-  test_config_manager.py
-  test_display_manager.py
-  test_rabbitmq_consumer.py
-  test_video_consumer_app.py
-  test_video_processor.py
 .dockerignore
 .env.example
 .gitignore
-.python-version
 config.yaml
 docker-compose.yml
 Dockerfile
 go.mod
-main_refactored.py
-main.go
-Makefile
-pyproject.toml
+LICENSE
+LICENSE.MD
 run-docker.sh
-setup-dev.sh
-test_consumer.py
 </directory_structure>
 
 <files>
 This section contains the contents of the repository's files.
 
-<file path="src/config/config_manager.py">
-from dataclasses import dataclass
-from typing import Dict, Any
+<file path="internal/metadata/publisher.go">
+package metadata
 
+import (
+	"encoding/json"
+	"time"
 
-@dataclass
-class RabbitMQConfig:
-    """
-    Configuration class for RabbitMQ connection parameters.
-    """
-    
-    host: str
-    port: int
-    virtual_host: str
-    username: str
-    password: str
-    exchange_name: str
-    routing_key: str
-    queue_name: str
+	"github.com/streadway/amqp"
+)
 
+// Publisher handles publishing frame metadata to RabbitMQ.
+type Publisher struct {
+	channel    *amqp.Channel
+	exchange   string
+	routingKey string
+	enabled    bool
+}
 
-class ConfigManager:
-    """
-    A class to manage application configuration settings.
-    """
+// NewPublisher creates a new metadata Publisher.
+func NewPublisher(ch *amqp.Channel, exchange, routingKey string, enabled bool) *Publisher {
+	return &Publisher{
+		channel:    ch,
+		exchange:   exchange,
+		routingKey: routingKey,
+		enabled:    enabled,
+	}
+}
 
-    def __init__(self, config_data: Dict[str, Any] = None) -> None:
-        """
-        Initializes the configuration manager with provided data.
+// Enabled returns true if the metadata publisher is enabled.
+func (p *Publisher) Enabled() bool {
+	return p.enabled
+}
 
-        Args:
-            config_data (Dict[str, Any], optional): Configuration data dictionary.
-        """
-        self.config_data = config_data or self._get_default_config()
+// Metadata represents the structure of the metadata message.
+type Metadata struct {
+	CameraID   string    `json:"camera_id"`
+	Timestamp  time.Time `json:"timestamp"`
+	RedisKey   string    `json:"redis_key"`
+	Width      int       `json:"width"`
+	Height     int       `json:"height"`
+	Encoding   string    `json:"encoding"`
+	SizeBytes  int       `json:"size_bytes"`
+}
 
-    def _get_default_config(self) -> Dict[str, Any]:
-        """
-        Returns the default configuration values.
+// PublishMetadata sends a JSON message with frame metadata to RabbitMQ.
+func (p *Publisher) PublishMetadata(cameraID string, timestamp time.Time, redisKey string, width, height, size int, encoding string) error {
+	if !p.enabled {
+		return nil
+	}
 
-        Returns:
-            Dict[str, Any]: Default configuration dictionary.
-        """
-        return {
-            'rabbitmq_host': 'localhost',
-            'rabbitmq_port': 5672,
-            'rabbitmq_vhost': 'guard_vhost',
-            'rabbitmq_user': 'user',
-            'rabbitmq_pass': 'password',
-            'exchange_name': 'carnes_nobres',
-            'routing_key': 'camera.#',
-            'queue_name': 'test_consumer_queue'
-        }
+	metadata := Metadata{
+		CameraID:   cameraID,
+		Timestamp:  timestamp,
+		RedisKey:   redisKey,
+		Width:      width,
+		Height:     height,
+		Encoding:   encoding,
+		SizeBytes:  size,
+	}
 
-    def get_rabbitmq_config(self) -> RabbitMQConfig:
-        """
-        Creates and returns a RabbitMQ configuration object.
+	body, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
 
-        Returns:
-            RabbitMQConfig: Configured RabbitMQ parameters.
-        """
-        return RabbitMQConfig(
-            host=self.config_data.get('rabbitmq_host'),
-            port=self.config_data.get('rabbitmq_port'),
-            virtual_host=self.config_data.get('rabbitmq_vhost'),
-            username=self.config_data.get('rabbitmq_user'),
-            password=self.config_data.get('rabbitmq_pass'),
-            exchange_name=self.config_data.get('exchange_name'),
-            routing_key=self.config_data.get('routing_key'),
-            queue_name=self.config_data.get('queue_name')
-        )
-
-    def get_config_value(self, key: str, default_value: Any = None) -> Any:
-        """
-        Retrieves a configuration value by key.
-
-        Args:
-            key (str): The configuration key to retrieve.
-            default_value (Any, optional): Default value if key not found.
-
-        Returns:
-            Any: The configuration value.
-        """
-        return self.config_data.get(key, default_value)
-
-    def update_config(self, key: str, value: Any) -> None:
-        """
-        Updates a configuration value.
-
-        Args:
-            key (str): The configuration key to update.
-            value (Any): The new value to set.
-        """
-        self.config_data[key] = value
+	return p.channel.Publish(
+		p.exchange,
+		p.routingKey,
+		false, // mandatory
+		false, // immediate
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        body,
+		},
+	)
+}
 </file>
 
-<file path="src/consumer/rabbitmq_consumer.py">
-import pika
-import sys
-from typing import Callable, Optional
-from ..config.config_manager import RabbitMQConfig
+<file path="internal/storage/redis_store.go">
+package storage
 
+import (
+	"context"
+	"fmt"
+	"time"
 
-class RabbitMQConsumer:
-    """
-    A class to handle RabbitMQ connection and message consumption.
-    """
+	"github.com/go-redis/redis/v8"
+)
 
-    def __init__(self, config: RabbitMQConfig) -> None:
-        """
-        Initializes the RabbitMQ consumer with configuration.
+// RedisStore handles storing frames in Redis with a configurable TTL.
+type RedisStore struct {
+	client  *redis.Client
+	ttl     time.Duration
+	prefix  string
+	enabled bool
+}
 
-        Args:
-            config (RabbitMQConfig): RabbitMQ connection configuration.
-        """
-        self.config = config
-        self.connection: Optional[pika.BlockingConnection] = None
-        self.channel: Optional[pika.channel.Channel] = None
-        self.queue_name: Optional[str] = None
-        self.message_callback: Optional[Callable] = None
+// NewRedisStore creates a new RedisStore.
+func NewRedisStore(addr string, ttlSeconds int, prefix string, enabled bool) *RedisStore {
+	if !enabled {
+		return &RedisStore{enabled: false}
+	}
 
-    def connect(self) -> bool:
-        """
-        Establishes connection to RabbitMQ server.
+	rdb := redis.NewClient(&redis.Options{
+		Addr: addr,
+	})
 
-        Returns:
-            bool: True if connection successful, False otherwise.
-        """
-        try:
-            credentials = pika.PlainCredentials(self.config.username, self.config.password)
-            connection_parameters = pika.ConnectionParameters(
-                host=self.config.host,
-                port=self.config.port,
-                virtual_host=self.config.virtual_host,
-                credentials=credentials
-            )
-            
-            self.connection = pika.BlockingConnection(connection_parameters)
-            self.channel = self.connection.channel()
-            
-            self.channel.exchange_declare(
-                exchange=self.config.exchange_name, 
-                exchange_type='topic', 
-                durable=True
-            )
-            
-            queue_result = self.channel.queue_declare(
-                queue=self.config.queue_name, 
-                exclusive=True, 
-                durable=False
-            )
-            self.queue_name = queue_result.method.queue
-            
-            self.channel.queue_bind(
-                exchange=self.config.exchange_name,
-                queue=self.queue_name,
-                routing_key=self.config.routing_key
-            )
-            
-            return True
-            
-        except pika.exceptions.AMQPConnectionError as connection_error:
-            print(f"RabbitMQ connection error: {connection_error}")
-            return False
-        except Exception as general_error:
-            print(f"Unexpected error during connection: {general_error}")
-            return False
+	return &RedisStore{
+		client:  rdb,
+		ttl:     time.Duration(ttlSeconds) * time.Second,
+		prefix:  prefix,
+		enabled: true,
+	}
+}
 
-    def set_message_callback(self, callback: Callable) -> None:
-        """
-        Sets the callback function for message processing.
+// Enabled returns true if the Redis store is enabled.
+func (r *RedisStore) Enabled() bool {
+	return r.enabled
+}
 
-        Args:
-            callback (Callable): Function to call when message is received.
-        """
-        self.message_callback = callback
+// SaveFrame stores a frame in Redis with the configured TTL.
+// The key is constructed as <prefix>:<cameraID>:<timestamp_RFC3339Nano>.
+func (r *RedisStore) SaveFrame(ctx context.Context, cameraID string, timestamp time.Time, data []byte) (string, error) {
+	if !r.enabled {
+		return "", nil
+	}
 
-    def start_consuming(self) -> None:
-        """
-        Starts consuming messages from the queue.
-        """
-        if not self.channel or not self.queue_name or not self.message_callback:
-            raise RuntimeError("Consumer not properly configured. Ensure connection, queue, and callback are set.")
-        
-        self.channel.basic_consume(
-            queue=self.queue_name,
-            on_message_callback=self._on_message_received,
-            auto_ack=True
-        )
-        
-        print(f"[*] Queue '{self.queue_name}' created. Waiting for frames...")
-
-    def _on_message_received(self, channel, method, properties, body) -> None:
-        """
-        Internal callback method for processing received messages.
-
-        Args:
-            channel: RabbitMQ channel object.
-            method: Method frame with routing key information.
-            properties: Message properties.
-            body: Message body content.
-        """
-        camera_id = method.routing_key.replace('camera.', '')
-        print(f" [x] Received frame from camera '{camera_id}'. Size: {len(body)} bytes")
-        
-        if self.message_callback:
-            self.message_callback(camera_id, body)
-
-    def process_data_events(self, time_limit_seconds: float = 0.1) -> None:
-        """
-        Processes data events for non-blocking consumption.
-
-        Args:
-            time_limit_seconds (float): Time limit for processing events.
-        """
-        if self.connection:
-            self.connection.process_data_events(time_limit=time_limit_seconds)
-
-    def is_connected(self) -> bool:
-        """
-        Checks if the connection is active.
-
-        Returns:
-            bool: True if connected, False otherwise.
-        """
-        return self.connection is not None and not self.connection.is_closed
-
-    def disconnect(self) -> None:
-        """
-        Closes the RabbitMQ connection and cleanup resources.
-        """
-        try:
-            if self.connection and not self.connection.is_closed:
-                self.connection.close()
-        except Exception as close_error:
-            print(f"Error closing connection: {close_error}")
-        finally:
-            self.connection = None
-            self.channel = None
-            self.queue_name = None
-
-    def handle_keyboard_interrupt(self) -> None:
-        """
-        Handles keyboard interrupt gracefully.
-        """
-        print('Interrupted by user. Shutting down.')
-        self.disconnect()
-        try:
-            sys.exit(0)
-        except SystemExit:
-            import os
-            os._exit(0)
+	key := fmt.Sprintf("%s:%s:%s", r.prefix, cameraID, timestamp.Format(time.RFC3339Nano))
+	err := r.client.Set(ctx, key, data, r.ttl).Err()
+	if err != nil {
+		return "", fmt.Errorf("failed to save frame to redis: %w", err)
+	}
+	return key, nil
+}
 </file>
 
-<file path="src/display/display_manager.py">
-import cv2
-import numpy as np
-from typing import Dict
+<file path=".github/workflows/build-and-push.yml">
+name: Docker CI/CD para GitHub Container Registry
 
+on:
+  push:
+    branches:
+      - main
+  release:
+    types: [published, created]
+  workflow_dispatch:
 
-class VideoDisplayManager:
-    """
-    A class to manage video display operations using OpenCV.
-    """
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
-    def __init__(self, window_title: str = "Cameras Grid (2x3)") -> None:
-        """
-        Initializes the video display manager.
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
 
-        Args:
-            window_title (str): Title for the display window.
-        """
-        self.window_title = window_title
-        self.is_window_open = False
-        self.camera_frames: Dict[str, np.ndarray] = {}
+      # 1. Configurar Docker Buildx
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    def update_camera_frame(self, camera_id: str, frame: np.ndarray) -> None:
-        """
-        Updates the frame for a specific camera.
+      # 2. Fazer login no GitHub Container Registry
+      - name: Login no GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-        Args:
-            camera_id (str): Identifier for the camera.
-            frame (np.ndarray): New frame data.
-        """
-        if frame is not None:
-            self.camera_frames[camera_id] = frame
+      # 3. Converter nome do repositório para minúsculas
+      - name: Converter repositório para minúsculas
+        run: |
+          echo "IMAGE_NAME_LC=${IMAGE_NAME,,}" >> $GITHUB_ENV
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
 
-    def display_grid(self, grid_image: np.ndarray) -> None:
-        """
-        Displays the grid image in the OpenCV window.
+      # 4. Definir tags manualmente
+      - name: Definir tags da imagem
+        id: tags
+        run: |
+          IMAGE_BASE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}"
+          
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            # Para releases: versão + latest
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION=${VERSION#v}  # Remove 'v' se existir
+            echo "TAGS=${IMAGE_BASE}:${VERSION},${IMAGE_BASE}:latest" >> $GITHUB_ENV
+          else
+            # Para push normal: branch + latest (se for main)
+            if [[ "${{ github.ref_name }}" == "main" ]]; then
+              echo "TAGS=${IMAGE_BASE}:main,${IMAGE_BASE}:latest" >> $GITHUB_ENV
+            else
+              echo "TAGS=${IMAGE_BASE}:${{ github.ref_name }}" >> $GITHUB_ENV
+            fi
+          fi
 
-        Args:
-            grid_image (np.ndarray): Grid image to display.
-        """
-        cv2.imshow(self.window_title, grid_image)
-        if not self.is_window_open:
-            self.is_window_open = True
+      # 5. Construir e enviar imagem Docker
+      - name: Construir e enviar imagem Docker
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.TAGS }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-    def check_exit_key(self, wait_time_ms: int = 1) -> bool:
-        """
-        Checks if the exit key ('q') has been pressed.
-
-        Args:
-            wait_time_ms (int): Time to wait for key press in milliseconds.
-
-        Returns:
-            bool: True if exit key was pressed, False otherwise.
-        """
-        key_pressed = cv2.waitKey(wait_time_ms) & 0xFF
-        return key_pressed == ord('q')
-
-    def has_camera_frames(self) -> bool:
-        """
-        Checks if there are any camera frames available.
-
-        Returns:
-            bool: True if camera frames exist, False otherwise.
-        """
-        return len(self.camera_frames) > 0
-
-    def get_camera_frames(self) -> Dict[str, np.ndarray]:
-        """
-        Returns the current camera frames.
-
-        Returns:
-            Dict[str, np.ndarray]: Dictionary of camera frames.
-        """
-        return self.camera_frames.copy()
-
-    def clear_camera_frames(self) -> None:
-        """
-        Clears all stored camera frames.
-        """
-        self.camera_frames.clear()
-
-    def close_windows(self) -> None:
-        """
-        Closes all OpenCV windows and cleanup resources.
-        """
-        cv2.destroyAllWindows()
-        self.is_window_open = False
-
-    def get_window_status(self) -> bool:
-        """
-        Returns the current window open status.
-
-        Returns:
-            bool: True if window is open, False otherwise.
-        """
-        return self.is_window_open
+      - name: Push da imagem bem-sucedido
+        run: |
+          echo "✅ Imagens Docker enviadas para o GitHub Container Registry:"
+          echo ""
+          echo "🏷️ Tags criadas:"
+          echo "${{ env.TAGS }}" | tr ',' '\n' | sed 's/^/  - /'
+          echo ""
+          echo "🚀 Deploy pronto!"
+          echo "📖 Para usar: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
 </file>
 
-<file path="src/display/video_processor.py">
-import cv2
-import numpy as np
-from typing import Dict, List, Optional
+<file path="cmd/edge-video/main.go">
+package main
 
+import (
+	"context"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-class VideoFrameProcessor:
-    """
-    A class to handle video frame processing operations.
-    """
+	"github.com/T3-Labs/edge-video/pkg/camera"
+	"github.com/T3-Labs/edge-video/pkg/config"
+	"github.com/T3-Labs/edge-video/pkg/mq"
+	"github.com/T3-Labs/edge-video/pkg/util"
+	"github.com/T3-Labs/edge-video/internal/metadata"
+	"github.com/T3-Labs/edge-video/internal/storage"
+)
 
-    def __init__(self, grid_width: int = 3, grid_height: int = 2) -> None:
-        """
-        Initializes the video frame processor.
+func main() {
+	cfg, err := config.LoadConfig("config.yaml")
+	if err != nil {
+		log.Fatalf("erro ao carregar config: %v", err)
+	}
 
-        Args:
-            grid_width (int): Number of cameras per row in the grid.
-            grid_height (int): Number of rows in the grid.
-        """
-        self.grid_width = grid_width
-        self.grid_height = grid_height
-        self.max_cameras = grid_width * grid_height
-        self.frame_width = 640
-        self.frame_height = 480
+	// O intervalo agora é calculado a partir de TargetFPS
+	interval := cfg.GetFrameInterval()
 
-    def decode_frame(self, frame_data: bytes) -> Optional[np.ndarray]:
-        """
-        Decodes frame data from bytes to OpenCV image format.
+	var publisher mq.Publisher
+	if cfg.Protocol == "mqtt" {
+		p, err := mq.NewMQTTPublisher(cfg.MQTT.Broker, cfg.MQTT.TopicPrefix)
+		if err != nil {
+			log.Fatalf("erro criar mqtt publisher: %v", err)
+		}
+		publisher = p
+	} else {
+		p, err := mq.NewAMQPPublisher(cfg.AMQP.AmqpURL, cfg.AMQP.Exchange, cfg.AMQP.RoutingKeyPrefix)
+		if err != nil {
+			log.Fatalf("erro criar amqp publisher: %v", err)
+		}
+		publisher = p
+		amqpPublisher = p
+	}
+	defer publisher.Close()
 
-        Args:
-            frame_data (bytes): Raw frame data in JPEG/PNG format.
+	// Inicializa o Redis Store
+	redisStore := storage.NewRedisStore(cfg.Redis.Address, cfg.Redis.TTLSeconds, cfg.Redis.Prefix, cfg.Redis.Enabled)
 
-        Returns:
-            Optional[np.ndarray]: Decoded image or None if decoding fails.
-        """
-        try:
-            numpy_array = np.frombuffer(frame_data, np.uint8)
-            image = cv2.imdecode(numpy_array, cv2.IMREAD_COLOR)
-            return image
-        except Exception as exception_error:
-            print(f"Error decoding frame: {exception_error}")
-            return None
+	// Inicializa o Metadata Publisher
+	var metaPublisher *metadata.Publisher
+	if amqpPublisher != nil {
+		metaPublisher = metadata.NewPublisher(amqpPublisher.GetChannel(), cfg.Metadata.Exchange, cfg.Metadata.RoutingKey, cfg.Metadata.Enabled)
+	} else {
+		metaPublisher = metadata.NewPublisher(nil, "", "", false) // Desabilitado se não for AMQP
+	}
 
-    def resize_frame(self, frame: np.ndarray) -> np.ndarray:
-        """
-        Resizes frame to standard dimensions for grid display.
+	var compressor *util.Compressor
+	if cfg.Compression.Enabled {
+		comp, err := util.NewCompressor(cfg.Compression.Level)
+		if err != nil {
+			log.Fatalf("erro criar compressor: %v", err)
+		}
+		compressor = comp
+	}
 
-        Args:
-            frame (np.ndarray): Input frame to resize.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-        Returns:
-            np.ndarray: Resized frame.
-        """
-        return cv2.resize(frame, (self.frame_width, self.frame_height))
+	for _, camCfg := range cfg.Cameras {
+		capture := camera.NewCapture(
+			ctx,
+			camera.Config{ID: camCfg.ID, URL: camCfg.URL},
+			interval,
+			compressor,
+			publisher,
+			redisStore,
+			metaPublisher,
+		)
 
-    def add_camera_label(self, frame: np.ndarray, camera_id: str) -> np.ndarray:
-        """
-        Adds camera ID label to the frame.
+		capture.Start()
+	}
 
-        Args:
-            frame (np.ndarray): Input frame to label.
-            camera_id (str): Camera identifier to display.
-
-        Returns:
-            np.ndarray: Frame with added label.
-        """
-        labeled_frame = frame.copy()
-        cv2.putText(
-            labeled_frame, 
-            camera_id, 
-            (10, 30), 
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1, 
-            (0, 255, 0), 
-            2, 
-            cv2.LINE_AA
-        )
-        return labeled_frame
-
-    def create_placeholder_frame(self, camera_number: int) -> np.ndarray:
-        """
-        Creates a black placeholder frame for inactive cameras.
-
-        Args:
-            camera_number (int): Camera number to display on placeholder.
-
-        Returns:
-            np.ndarray: Black frame with camera number.
-        """
-        placeholder_frame = np.zeros((self.frame_height, self.frame_width, 3), dtype=np.uint8)
-        camera_text = f"Cam{camera_number}"
-        cv2.putText(
-            placeholder_frame, 
-            camera_text, 
-            (250, 240), 
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1, 
-            (255, 255, 255), 
-            2, 
-            cv2.LINE_AA
-        )
-        return placeholder_frame
-
-    def process_frames_for_grid(self, camera_frames: Dict[str, np.ndarray]) -> List[np.ndarray]:
-        """
-        Processes camera frames for grid display.
-
-        Args:
-            camera_frames (Dict[str, np.ndarray]): Dictionary of camera frames.
-
-        Returns:
-            List[np.ndarray]: List of processed frames ready for grid display.
-        """
-        processed_frames = []
-        camera_ids = sorted(camera_frames.keys())
-        
-        for camera_index in range(self.max_cameras):
-            if camera_index < len(camera_ids):
-                camera_id = camera_ids[camera_index]
-                frame = camera_frames[camera_id]
-                resized_frame = self.resize_frame(frame)
-                labeled_frame = self.add_camera_label(resized_frame, camera_id)
-                processed_frames.append(labeled_frame)
-            else:
-                placeholder_frame = self.create_placeholder_frame(camera_index + 1)
-                processed_frames.append(placeholder_frame)
-        
-        return processed_frames
-
-    def create_grid_display(self, processed_frames: List[np.ndarray]) -> np.ndarray:
-        """
-        Creates a grid display from processed frames.
-
-        Args:
-            processed_frames (List[np.ndarray]): List of processed frames.
-
-        Returns:
-            np.ndarray: Combined grid display.
-        """
-        if len(processed_frames) != self.max_cameras:
-            raise ValueError(f"Expected {self.max_cameras} frames, got {len(processed_frames)}")
-        
-        grid_rows = []
-        for row_index in range(self.grid_height):
-            start_index = row_index * self.grid_width
-            end_index = start_index + self.grid_width
-            row_frames = processed_frames[start_index:end_index]
-            grid_row = np.hstack(row_frames)
-            grid_rows.append(grid_row)
-        
-        return np.vstack(grid_rows)
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	log.Println("recebido sinal, finalizando...")
+	cancel()
+	time.Sleep(500 * time.Millisecond)
+}
 </file>
 
-<file path="src/video_consumer_app.py">
-import time
-from typing import Optional
-from .config.config_manager import ConfigManager, RabbitMQConfig
-from .consumer.rabbitmq_consumer import RabbitMQConsumer  
-from .display.video_processor import VideoFrameProcessor
-from .display.display_manager import VideoDisplayManager
+<file path="pkg/camera/camera.go">
+package camera
 
+import (
+	"bytes"
+	"context"
+	"errors"
+	"log"
+	"os/exec"
+	"time"
 
-class VideoConsumerApplication:
-    """
-    Main application class that orchestrates video consumption and display.
-    """
+	"github.com/T3-Labs/edge-video/internal/metadata"
+	"github.com/T3-Labs/edge-video/internal/storage"
+	"github.com/T3-Labs/edge-video/pkg/mq"
+	"github.com/T3-Labs/edge-video/pkg/util"
+	"github.com/go-redis/redis/v8"
+	"github.com/streadway/amqp"
+)
 
-    def __init__(self, config_manager: ConfigManager) -> None:
-        """
-        Initializes the video consumer application.
+type Config struct {
+	ID  string
+	URL string
+}
 
-        Args:
-            config_manager (ConfigManager): Configuration manager instance.
-        """
-        self.config_manager = config_manager
-        self.rabbitmq_config = config_manager.get_rabbitmq_config()
-        
-        self.consumer = RabbitMQConsumer(self.rabbitmq_config)
-        self.video_processor = VideoFrameProcessor()
-        self.display_manager = VideoDisplayManager()
-        
-        self.consumer.set_message_callback(self._handle_frame_message)
-        self.is_running = False
+type Capture struct {
+	ctx           context.Context
+	config        Config
+	interval      time.Duration
+	compressor    *util.Compressor
+	publisher     mq.Publisher
+	redisStore    *storage.RedisStore
+	metaPublisher *metadata.Publisher
+}
 
-    def _handle_frame_message(self, camera_id: str, frame_data: bytes) -> None:
-        """
-        Handles incoming frame messages from RabbitMQ.
+func NewCapture(
+	ctx context.Context,
+	config Config,
+	interval time.Duration,
+	compressor *util.Compressor,
+	publisher mq.Publisher,
+	redisStore *storage.RedisStore,
+	metaPublisher *metadata.Publisher,
+) *Capture {
+	return &Capture{
+		ctx:           ctx,
+		config:        config,
+		interval:      interval,
+		compressor:    compressor,
+		publisher:     publisher,
+		redisStore:    redisStore,
+		metaPublisher: metaPublisher,
+	}
+}
 
-        Args:
-            camera_id (str): Identifier of the camera.
-            frame_data (bytes): Raw frame data.
-        """
-        decoded_frame = self.video_processor.decode_frame(frame_data)
-        if decoded_frame is not None:
-            self.display_manager.update_camera_frame(camera_id, decoded_frame)
-        else:
-            print(f"Failed to decode frame from camera '{camera_id}'.")
+func (c *Capture) Start() {
+	go func() {
+		ticker := time.NewTicker(c.interval)
+		defer ticker.Stop()
 
-    def start(self) -> bool:
-        """
-        Starts the video consumer application.
+		for {
+			select {
+			case <-c.ctx.Done():
+				log.Printf("parando captura para camera %s", c.config.ID)
+				return
+			case <-ticker.C:
+				c.captureAndPublish()
+			}
+		}
+	}()
+}
 
-        Returns:
-            bool: True if started successfully, False otherwise.
-        """
-        if not self.consumer.connect():
-            print("Failed to connect to RabbitMQ. Check configuration and server status.")
-            return False
-        
-        self.consumer.start_consuming()
-        self.is_running = True
-        print("[INFO] Press 'q' in any window to exit.")
-        
-        return True
+func (c *Capture) captureAndPublish() {
+	cmd := exec.CommandContext(
+		c.ctx,
+		"ffmpeg",
+		"-rtsp_transport", "tcp",
+		"-i", c.config.URL,
+		"-frames:v", "1",
+		"-f", "image2pipe",
+		"-vcodec", "mjpeg",
+		"-q:v", "5",
+		"-",
+	)
 
-    def run_main_loop(self) -> None:
-        """
-        Runs the main application loop for processing and display.
-        """
-        try:
-            while self.is_running:
-                self.consumer.process_data_events(time_limit_seconds=0.1)
-                
-                if self.display_manager.has_camera_frames():
-                    self._update_display()
-                
-                if self.display_manager.check_exit_key():
-                    print("Exiting by user command.")
-                    self.stop()
-                    break
-                    
-        except KeyboardInterrupt:
-            self.consumer.handle_keyboard_interrupt()
-            self.stop()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
-    def _update_display(self) -> None:
-        """
-        Updates the video display with current frames.
-        """
-        camera_frames = self.display_manager.get_camera_frames()
-        processed_frames = self.video_processor.process_frames_for_grid(camera_frames)
-        grid_display = self.video_processor.create_grid_display(processed_frames)
-        self.display_manager.display_grid(grid_display)
+	err := cmd.Run()
+	if err != nil {
+		log.Printf("erro ao capturar frame da câmera %s: %v (stderr: %s)", c.config.ID, err, stderr.String())
+		return
+	}
 
-    def stop(self) -> None:
-        """
-        Stops the application and cleanup resources.
-        """
-        self.is_running = False
-        self.display_manager.close_windows()
-        self.consumer.disconnect()
+	frameData := stdout.Bytes()
+	if len(frameData) == 0 {
+		log.Printf("frame vazio capturado da câmera %s", c.config.ID)
+		return
+	}
 
-    def get_running_status(self) -> bool:
-        """
-        Returns the current running status.
+	log.Printf("capturado frame da camera %s (%d bytes)", c.config.ID, len(frameData))
 
-        Returns:
-            bool: True if running, False otherwise.
-        """
-        return self.is_running
+	// Publicação principal (síncrona ou assíncrona, dependendo da implementação do publisher)
+	err = c.publisher.Publish(c.ctx, c.config.ID, frameData)
+	if err != nil {
+		log.Printf("erro ao publicar frame da câmera %s: %v", c.config.ID, err)
+	}
+
+	// Operações assíncronas de Redis e Metadados
+	if c.redisStore.Enabled() {
+		go func() {
+			timestamp := time.Now()
+			// TODO: Obter width/height do frame real se possível
+			width, height := 1280, 720
+
+			key, err := c.redisStore.SaveFrame(c.ctx, c.config.ID, timestamp, frameData)
+			if err != nil {
+				// Tratar erro de conexão com Redis (ex: logar)
+				if errors.Is(err, redis.ErrClosed) {
+					log.Printf("redis store error (connection closed): %v", err)
+				} else {
+					log.Printf("redis store error: %v", err)
+				}
+				return
+			}
+
+			if c.metaPublisher.Enabled() {
+				err = c.metaPublisher.PublishMetadata(c.config.ID, timestamp, key, width, height, len(frameData), "jpeg")
+				if err != nil {
+					// Tratar erro de conexão com RabbitMQ (ex: logar)
+					if amqpErr, ok := err.(*amqp.Error); ok && amqpErr.Code == amqp.ChannelError {
+						log.Printf("metadata publish error (channel closed): %v", err)
+					} else {
+						log.Printf("metadata publish error: %v", err)
+					}
+				}
+			}
+		}()
+	}
+}
 </file>
 
-<file path="tests/test_config_manager.py">
-import pytest
-from src.config.config_manager import ConfigManager, RabbitMQConfig
+<file path="pkg/config/config_test.go">
+package config
 
+import (
+	"os"
+	"testing"
+	"time"
 
-class TestConfigManager:
-    """
-    Test class for ConfigManager functionality.
-    """
+	"github.com/stretchr/testify/assert"
+)
 
-    def test_config_manager_initialization_with_default_config(self):
-        """
-        Test ConfigManager initialization with default configuration.
-        """
-        config_manager = ConfigManager()
-        
-        assert config_manager.config_data is not None
-        assert config_manager.config_data['rabbitmq_host'] == 'localhost'
-        assert config_manager.config_data['rabbitmq_port'] == 5672
+func TestLoadConfig(t *testing.T) {
+	content := `
+target_fps: 12.5
+protocol: "amqp"
+amqp:
+  amqp_url: "amqp://guest:guest@localhost:5672/"
+  exchange: "test_exchange"
+  routing_key_prefix: "test."
+cameras:
+  - id: "cam1"
+    url: "rtsp://test.com/1"
+`
+	tmpfile, err := os.CreateTemp("", "config-*.yaml")
+	assert.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
 
-    def test_config_manager_initialization_with_custom_config(self):
-        """
-        Test ConfigManager initialization with custom configuration.
-        """
-        custom_config = {'rabbitmq_host': 'custom-host', 'rabbitmq_port': 5673}
-        config_manager = ConfigManager(custom_config)
-        
-        assert config_manager.config_data['rabbitmq_host'] == 'custom-host'
-        assert config_manager.config_data['rabbitmq_port'] == 5673
+	_, err = tmpfile.WriteString(content)
+	assert.NoError(t, err)
+	tmpfile.Close()
 
-    def test_get_rabbitmq_config_returns_correct_object(self):
-        """
-        Test that get_rabbitmq_config returns a properly configured RabbitMQConfig object.
-        """
-        config_manager = ConfigManager()
-        rabbitmq_config = config_manager.get_rabbitmq_config()
-        
-        assert isinstance(rabbitmq_config, RabbitMQConfig)
-        assert rabbitmq_config.host == 'localhost'
-        assert rabbitmq_config.port == 5672
-        assert rabbitmq_config.virtual_host == 'guard_vhost'
-        assert rabbitmq_config.username == 'user'
-        assert rabbitmq_config.password == 'password'
+	cfg, err := LoadConfig(tmpfile.Name())
+	assert.NoError(t, err)
+	assert.NotNil(t, cfg)
 
-    def test_get_config_value_with_existing_key(self):
-        """
-        Test getting a configuration value that exists.
-        """
-        config_manager = ConfigManager()
-        host_value = config_manager.get_config_value('rabbitmq_host')
-        
-        assert host_value == 'localhost'
+	assert.Equal(t, 12.5, cfg.TargetFPS)
+	assert.Equal(t, "amqp", cfg.Protocol)
+	assert.Equal(t, "amqp://guest:guest@localhost:5672/", cfg.AMQP.AmqpURL)
+	assert.Equal(t, "test_exchange", cfg.AMQP.Exchange)
+	assert.Equal(t, "test.", cfg.AMQP.RoutingKeyPrefix)
+	assert.Len(t, cfg.Cameras, 1)
+	assert.Equal(t, "cam1", cfg.Cameras[0].ID)
+	assert.Equal(t, "rtsp://test.com/1", cfg.Cameras[0].URL)
+	assert.Equal(t, time.Duration(float64(time.Second)/12.5), cfg.GetFrameInterval())
+}
 
-    def test_get_config_value_with_non_existing_key(self):
-        """
-        Test getting a configuration value that doesn't exist returns None.
-        """
-        config_manager = ConfigManager()
-        non_existing_value = config_manager.get_config_value('non_existing_key')
-        
-        assert non_existing_value is None
-
-    def test_get_config_value_with_default_value(self):
-        """
-        Test getting a configuration value with a default value.
-        """
-        config_manager = ConfigManager()
-        default_value = config_manager.get_config_value('non_existing_key', 'default')
-        
-        assert default_value == 'default'
-
-    def test_update_config_updates_value(self):
-        """
-        Test updating a configuration value.
-        """
-        config_manager = ConfigManager()
-        config_manager.update_config('rabbitmq_host', 'new-host')
-        
-        assert config_manager.config_data['rabbitmq_host'] == 'new-host'
-
-    def test_update_config_adds_new_key(self):
-        """
-        Test updating configuration with a new key.
-        """
-        config_manager = ConfigManager()
-        config_manager.update_config('new_key', 'new_value')
-        
-        assert config_manager.config_data['new_key'] == 'new_value'
-
-
-class TestRabbitMQConfig:
-    """
-    Test class for RabbitMQConfig dataclass.
-    """
-
-    def test_rabbitmq_config_initialization(self):
-        """
-        Test RabbitMQConfig initialization with all parameters.
-        """
-        config = RabbitMQConfig(
-            host='localhost',
-            port=5672,
-            virtual_host='test_vhost',
-            username='test_user',
-            password='test_pass',
-            exchange_name='test_exchange',
-            routing_key='test.#',
-            queue_name='test_queue'
-        )
-        
-        assert config.host == 'localhost'
-        assert config.port == 5672
-        assert config.virtual_host == 'test_vhost'
-        assert config.username == 'test_user'
-        assert config.password == 'test_pass'
-        assert config.exchange_name == 'test_exchange'
-        assert config.routing_key == 'test.#'
-        assert config.queue_name == 'test_queue'
+func TestLoadConfig_FileNotFound(t *testing.T) {
+	_, err := LoadConfig("non_existent_file.yaml")
+	assert.Error(t, err)
+}
 </file>
 
-<file path="tests/test_display_manager.py">
-import pytest
-import numpy as np
-from unittest.mock import patch, Mock
-from src.display.display_manager import VideoDisplayManager
+<file path="pkg/config/config.go">
+package config
 
+import (
+	"time"
 
-class TestVideoDisplayManager:
-    """
-    Test class for VideoDisplayManager functionality.
-    """
+	"github.com/spf13/viper"
+)
 
-    def setup_method(self):
-        """
-        Setup method called before each test.
-        """
-        self.display_manager = VideoDisplayManager()
+type CameraConfig struct {
+	ID   string `mapstructure:"id"`
+	Name string `mapstructure:"name"`
+	URL  string `mapstructure:"url"`
+}
 
-    def test_video_display_manager_initialization_with_default_title(self):
-        """
-        Test VideoDisplayManager initialization with default window title.
-        """
-        assert self.display_manager.window_title == "Cameras Grid (2x3)"
-        assert self.display_manager.is_window_open is False
-        assert len(self.display_manager.camera_frames) == 0
+type AMQPConfig struct {
+	AmqpURL          string `mapstructure:"amqp_url"`
+	Exchange         string `mapstructure:"exchange"`
+	RoutingKeyPrefix string `mapstructure:"routing_key_prefix"`
+}
 
-    def test_video_display_manager_initialization_with_custom_title(self):
-        """
-        Test VideoDisplayManager initialization with custom window title.
-        """
-        custom_manager = VideoDisplayManager("Custom Window Title")
-        
-        assert custom_manager.window_title == "Custom Window Title"
-        assert custom_manager.is_window_open is False
+type MQTTConfig struct {
+	Broker      string `mapstructure:"broker"`
+	TopicPrefix string `mapstructure:"topic_prefix"`
+}
 
-    def test_update_camera_frame_with_valid_frame(self):
-        """
-        Test updating camera frame with valid frame data.
-        """
-        camera_id = "cam1"
-        test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        
-        self.display_manager.update_camera_frame(camera_id, test_frame)
-        
-        assert camera_id in self.display_manager.camera_frames
-        assert np.array_equal(self.display_manager.camera_frames[camera_id], test_frame)
+type Compression struct {
+	Enabled bool `mapstructure:"enabled"`
+	Level   int  `mapstructure:"level"`
+}
 
-    def test_update_camera_frame_with_none_frame(self):
-        """
-        Test updating camera frame with None frame data doesn't store it.
-        """
-        camera_id = "cam1"
-        initial_count = len(self.display_manager.camera_frames)
-        
-        self.display_manager.update_camera_frame(camera_id, None)
-        
-        assert len(self.display_manager.camera_frames) == initial_count
-        assert camera_id not in self.display_manager.camera_frames
+type Optimization struct {
+	MaxWorkers      int    `mapstructure:"max_workers"`
+	BufferSize      int    `mapstructure:"buffer_size"`
+	FrameQuality    int    `mapstructure:"frame_quality"`
+	FrameResolution string `mapstructure:"frame_resolution"`
+}
 
-    @patch('cv2.imshow')
-    def test_display_grid(self, mock_imshow):
-        """
-        Test displaying grid image.
-        """
-        grid_image = np.zeros((960, 1920, 3), dtype=np.uint8)
-        
-        self.display_manager.display_grid(grid_image)
-        
-        mock_imshow.assert_called_once_with(self.display_manager.window_title, grid_image)
-        assert self.display_manager.is_window_open is True
+type RedisConfig struct {
+	Enabled    bool   `mapstructure:"enabled"`
+	Address    string `mapstructure:"address"`
+	TTLSeconds int    `mapstructure:"ttl_seconds"`
+	Prefix     string `mapstructure:"prefix"`
+}
 
-    @patch('cv2.waitKey')
-    def test_check_exit_key_with_q_pressed(self, mock_waitKey):
-        """
-        Test check_exit_key returns True when 'q' is pressed.
-        """
-        mock_waitKey.return_value = ord('q')
-        
-        result = self.display_manager.check_exit_key()
-        
-        mock_waitKey.assert_called_once_with(1)
-        assert result is True
+type MetadataConfig struct {
+	Enabled    bool   `mapstructure:"enabled"`
+	Exchange   string `mapstructure:"exchange"`
+	RoutingKey string `mapstructure:"routing_key"`
+}
 
-    @patch('cv2.waitKey')
-    def test_check_exit_key_with_other_key_pressed(self, mock_waitKey):
-        """
-        Test check_exit_key returns False when other key is pressed.
-        """
-        mock_waitKey.return_value = ord('a')
-        
-        result = self.display_manager.check_exit_key()
-        
-        mock_waitKey.assert_called_once_with(1)
-        assert result is False
+type Config struct {
+	TargetFPS           float64        `mapstructure:"target_fps"`
+	Protocol            string         `mapstructure:"protocol"`
+	UseOptimizedCapture bool           `mapstructure:"use_optimized_capture"`
+	AMQP                AMQPConfig     `mapstructure:"amqp"`
+	MQTT                MQTTConfig     `mapstructure:"mqtt"`
+	Redis               RedisConfig    `mapstructure:"redis"`
+	Metadata            MetadataConfig `mapstructure:"metadata"`
+	Compression         Compression    `mapstructure:"compression"`
+	Optimization        Optimization `mapstructure:"optimization"`
+	Cameras             []CameraConfig `mapstructure:"cameras"`
+}
 
-    @patch('cv2.waitKey')
-    def test_check_exit_key_with_custom_wait_time(self, mock_waitKey):
-        """
-        Test check_exit_key with custom wait time.
-        """
-        mock_waitKey.return_value = ord('a')
-        
-        self.display_manager.check_exit_key(wait_time_ms=5)
-        
-        mock_waitKey.assert_called_once_with(5)
+// GetFrameInterval calcula o intervalo de tempo entre os frames com base no TargetFPS.
+// Retorna um intervalo padrão de 2 FPS se o valor for inválido.
+func (c *Config) GetFrameInterval() time.Duration {
+	if c.TargetFPS <= 0 {
+		return time.Second / 2 // Padrão: 2 FPS
+	}
+	return time.Duration(float64(time.Second) / c.TargetFPS)
+}
 
-    def test_has_camera_frames_when_empty(self):
-        """
-        Test has_camera_frames returns False when no frames exist.
-        """
-        result = self.display_manager.has_camera_frames()
-        
-        assert result is False
-
-    def test_has_camera_frames_when_frames_exist(self):
-        """
-        Test has_camera_frames returns True when frames exist.
-        """
-        test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        self.display_manager.update_camera_frame("cam1", test_frame)
-        
-        result = self.display_manager.has_camera_frames()
-        
-        assert result is True
-
-    def test_get_camera_frames_returns_copy(self):
-        """
-        Test get_camera_frames returns a copy of camera frames.
-        """
-        test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        self.display_manager.update_camera_frame("cam1", test_frame)
-        
-        frames_copy = self.display_manager.get_camera_frames()
-        
-        assert frames_copy is not self.display_manager.camera_frames
-        assert "cam1" in frames_copy
-        assert np.array_equal(frames_copy["cam1"], test_frame)
-
-    def test_clear_camera_frames(self):
-        """
-        Test clearing all camera frames.
-        """
-        test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        self.display_manager.update_camera_frame("cam1", test_frame)
-        
-        self.display_manager.clear_camera_frames()
-        
-        assert len(self.display_manager.camera_frames) == 0
-
-    @patch('cv2.destroyAllWindows')
-    def test_close_windows(self, mock_destroyAllWindows):
-        """
-        Test closing windows and cleanup.
-        """
-        self.display_manager.is_window_open = True
-        
-        self.display_manager.close_windows()
-        
-        mock_destroyAllWindows.assert_called_once()
-        assert self.display_manager.is_window_open is False
-
-    def test_get_window_status_when_closed(self):
-        """
-        Test get_window_status returns False when window is closed.
-        """
-        result = self.display_manager.get_window_status()
-        
-        assert result is False
-
-    def test_get_window_status_when_open(self):
-        """
-        Test get_window_status returns True when window is open.
-        """
-        self.display_manager.is_window_open = True
-        
-        result = self.display_manager.get_window_status()
-        
-        assert result is True
+func LoadConfig(path string) (*Config, error) {
+	viper.SetConfigFile(path)
+	if err := viper.ReadInConfig(); err != nil {
+		return nil, err
+	}
+	var cfg Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
 </file>
 
-<file path="tests/test_rabbitmq_consumer.py">
-import pytest
-from unittest.mock import patch, Mock, MagicMock
-from src.consumer.rabbitmq_consumer import RabbitMQConsumer
-from src.config.config_manager import RabbitMQConfig
+<file path="pkg/mq/amqp.go">
+package mq
 
+import (
+	"context"
+	"fmt"
+	"time"
 
-class TestRabbitMQConsumer:
-    """
-    Test class for RabbitMQConsumer functionality.
-    """
+	"github.com/streadway/amqp"
+)
 
-    def setup_method(self):
-        """
-        Setup method called before each test.
-        """
-        self.config = RabbitMQConfig(
-            host='localhost',
-            port=5672,
-            virtual_host='test_vhost',
-            username='test_user',
-            password='test_pass',
-            exchange_name='test_exchange',
-            routing_key='camera.#',
-            queue_name='test_queue'
-        )
-        self.consumer = RabbitMQConsumer(self.config)
+type AMQPPublisher struct {
+	conn             *amqp.Connection
+	channel          *amqp.Channel
+	exchange         string
+	routingKeyPrefix string
+}
 
-    def test_rabbitmq_consumer_initialization(self):
-        """
-        Test RabbitMQConsumer initialization.
-        """
-        assert self.consumer.config == self.config
-        assert self.consumer.connection is None
-        assert self.consumer.channel is None
-        assert self.consumer.queue_name is None
-        assert self.consumer.message_callback is None
+func NewAMQPPublisher(amqpURL, exchange, routingKeyPrefix string) (*AMQPPublisher, error) {
+	conn, err := amqp.Dial(amqpURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
+	}
 
-    @patch('pika.BlockingConnection')
-    @patch('pika.PlainCredentials')
-    @patch('pika.ConnectionParameters')
-    def test_connect_successful(self, mock_params, mock_credentials, mock_connection):
-        """
-        Test successful connection to RabbitMQ.
-        """
-        mock_conn = Mock()
-        mock_channel = Mock()
-        mock_queue_result = Mock()
-        mock_queue_result.method.queue = 'test_queue_name'
-        
-        mock_connection.return_value = mock_conn
-        mock_conn.channel.return_value = mock_channel
-        mock_channel.queue_declare.return_value = mock_queue_result
-        
-        result = self.consumer.connect()
-        
-        assert result is True
-        mock_credentials.assert_called_once_with('test_user', 'test_pass')
-        mock_connection.assert_called_once()
-        mock_channel.exchange_declare.assert_called_once_with(
-            exchange='test_exchange',
-            exchange_type='topic',
-            durable=True
-        )
-        mock_channel.queue_bind.assert_called_once()
+	ch, err := conn.Channel()
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to open a channel: %w", err)
+	}
 
-    @patch('pika.BlockingConnection')
-    def test_connect_amqp_connection_error(self, mock_connection):
-        """
-        Test connection failure with AMQPConnectionError.
-        """
-        import pika
-        mock_connection.side_effect = pika.exceptions.AMQPConnectionError("Connection failed")
-        
-        result = self.consumer.connect()
-        
-        assert result is False
+	err = ch.ExchangeDeclare(
+		exchange,
+		"topic",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to declare an exchange: %w", err)
+	}
 
-    @patch('pika.BlockingConnection')
-    def test_connect_general_exception(self, mock_connection):
-        """
-        Test connection failure with general exception.
-        """
-        mock_connection.side_effect = Exception("Unexpected error")
-        
-        result = self.consumer.connect()
-        
-        assert result is False
+	return &AMQPPublisher{
+		conn:             conn,
+		channel:          ch,
+		exchange:         exchange,
+		routingKeyPrefix: routingKeyPrefix,
+	}, nil
+}
 
-    def test_set_message_callback(self):
-        """
-        Test setting message callback function.
-        """
-        callback_function = Mock()
-        
-        self.consumer.set_message_callback(callback_function)
-        
-        assert self.consumer.message_callback == callback_function
+func (p *AMQPPublisher) Publish(ctx context.Context, cameraID string, payload []byte) error {
+	routingKey := p.routingKeyPrefix + cameraID
+	err := p.channel.Publish(
+		p.exchange,
+		routingKey,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "application/octet-stream",
+			Body:        payload,
+			Timestamp:   time.Now(),
+		})
+	if err != nil {
+		return fmt.Errorf("failed to publish a message: %w", err)
+	}
+	return nil
+}
 
-    def test_start_consuming_without_proper_setup_raises_error(self):
-        """
-        Test start_consuming raises error when not properly configured.
-        """
-        with pytest.raises(RuntimeError, match="Consumer not properly configured"):
-            self.consumer.start_consuming()
+func (p *AMQPPublisher) Close() error {
+	if p.channel != nil {
+		p.channel.Close()
+	}
+	if p.conn != nil {
+		return p.conn.Close()
+	}
+	return nil
+}
 
-    def test_start_consuming_with_proper_setup(self):
-        """
-        Test start_consuming with proper configuration.
-        """
-        mock_channel = Mock()
-        callback_function = Mock()
-        
-        self.consumer.channel = mock_channel
-        self.consumer.queue_name = 'test_queue'
-        self.consumer.message_callback = callback_function
-        
-        self.consumer.start_consuming()
-        
-        mock_channel.basic_consume.assert_called_once_with(
-            queue='test_queue',
-            on_message_callback=self.consumer._on_message_received,
-            auto_ack=True
-        )
-
-    def test_on_message_received_calls_callback(self):
-        """
-        Test _on_message_received method calls message callback.
-        """
-        callback_function = Mock()
-        mock_method = Mock()
-        mock_method.routing_key = 'camera.cam1'
-        
-        self.consumer.message_callback = callback_function
-        
-        self.consumer._on_message_received(None, mock_method, None, b'frame_data')
-        
-        callback_function.assert_called_once_with('cam1', b'frame_data')
-
-    def test_process_data_events_with_connection(self):
-        """
-        Test process_data_events with active connection.
-        """
-        mock_connection = Mock()
-        self.consumer.connection = mock_connection
-        
-        self.consumer.process_data_events(0.5)
-        
-        mock_connection.process_data_events.assert_called_once_with(time_limit=0.5)
-
-    def test_process_data_events_without_connection(self):
-        """
-        Test process_data_events without connection does nothing.
-        """
-        self.consumer.connection = None
-        
-        # Should not raise any exception
-        self.consumer.process_data_events()
-
-    def test_is_connected_with_active_connection(self):
-        """
-        Test is_connected returns True with active connection.
-        """
-        mock_connection = Mock()
-        mock_connection.is_closed = False
-        self.consumer.connection = mock_connection
-        
-        result = self.consumer.is_connected()
-        
-        assert result is True
-
-    def test_is_connected_with_closed_connection(self):
-        """
-        Test is_connected returns False with closed connection.
-        """
-        mock_connection = Mock()
-        mock_connection.is_closed = True
-        self.consumer.connection = mock_connection
-        
-        result = self.consumer.is_connected()
-        
-        assert result is False
-
-    def test_is_connected_without_connection(self):
-        """
-        Test is_connected returns False without connection.
-        """
-        self.consumer.connection = None
-        
-        result = self.consumer.is_connected()
-        
-        assert result is False
-
-    def test_disconnect_with_active_connection(self):
-        """
-        Test disconnect with active connection.
-        """
-        mock_connection = Mock()
-        mock_connection.is_closed = False
-        self.consumer.connection = mock_connection
-        
-        self.consumer.disconnect()
-        
-        mock_connection.close.assert_called_once()
-        assert self.consumer.connection is None
-        assert self.consumer.channel is None
-        assert self.consumer.queue_name is None
-
-    def test_disconnect_with_exception(self):
-        """
-        Test disconnect handles exception gracefully.
-        """
-        mock_connection = Mock()
-        mock_connection.is_closed = False
-        mock_connection.close.side_effect = Exception("Close error")
-        self.consumer.connection = mock_connection
-        
-        # Should not raise exception
-        self.consumer.disconnect()
-        
-        assert self.consumer.connection is None
-
-    @patch('sys.exit')
-    @patch('os._exit')
-    def test_handle_keyboard_interrupt(self, mock_os_exit, mock_sys_exit):
-        """
-        Test handle_keyboard_interrupt method.
-        """
-        mock_connection = Mock()
-        self.consumer.connection = mock_connection
-        
-        mock_sys_exit.side_effect = SystemExit()
-        
-        self.consumer.handle_keyboard_interrupt()
-        
-        mock_connection.close.assert_called_once()
-        mock_sys_exit.assert_called_once_with(0)
-        mock_os_exit.assert_called_once_with(0)
+// GetChannel returns the underlying AMQP channel.
+func (p *AMQPPublisher) GetChannel() *amqp.Channel {
+	return p.channel
+}
 </file>
 
-<file path="tests/test_video_consumer_app.py">
-import pytest
-from unittest.mock import patch, Mock, MagicMock
-import numpy as np
-from src.video_consumer_app import VideoConsumerApplication
-from src.config.config_manager import ConfigManager
+<file path="pkg/mq/mqtt.go">
+package mq
 
+import (
+	"context"
+	"fmt"
+	"log"
 
-class TestVideoConsumerApplication:
-    """
-    Test class for VideoConsumerApplication functionality.
-    """
+	mqtt "github.com/eclipse/paho.mqtt.golang"
+)
 
-    def setup_method(self):
-        """
-        Setup method called before each test.
-        """
-        self.config_manager = ConfigManager()
-        self.app = VideoConsumerApplication(self.config_manager)
+type MQTTPublisher struct {
+	client      mqtt.Client
+	topicPrefix string
+}
 
-    @patch('src.video_consumer_app.RabbitMQConsumer')
-    @patch('src.video_consumer_app.VideoFrameProcessor')
-    @patch('src.video_consumer_app.VideoDisplayManager')
-    def test_video_consumer_app_initialization(self, mock_display, mock_processor, mock_consumer):
-        """
-        Test VideoConsumerApplication initialization.
-        """
-        config_manager = ConfigManager()
-        app = VideoConsumerApplication(config_manager)
-        
-        assert app.config_manager == config_manager
-        assert app.is_running is False
-        mock_consumer.assert_called_once()
-        mock_processor.assert_called_once()
-        mock_display.assert_called_once()
+func NewMQTTPublisher(broker, topicPrefix string) (*MQTTPublisher, error) {
+	opts := mqtt.NewClientOptions().AddBroker(broker)
+	opts.SetAutoReconnect(true)
+	opts.SetConnectRetry(true)
 
-    def test_handle_frame_message_successful_decoding(self):
-        """
-        Test _handle_frame_message with successful frame decoding.
-        """
-        test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        self.app.video_processor.decode_frame = Mock(return_value=test_frame)
-        self.app.display_manager.update_camera_frame = Mock()
-        
-        self.app._handle_frame_message("cam1", b"frame_data")
-        
-        self.app.video_processor.decode_frame.assert_called_once_with(b"frame_data")
-        self.app.display_manager.update_camera_frame.assert_called_once_with("cam1", test_frame)
+	client := mqtt.NewClient(opts)
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
+		return nil, fmt.Errorf("mqtt connect: %w", token.Error())
+	}
+	log.Println("Conectado ao broker MQTT")
+	return &MQTTPublisher{client: client, topicPrefix: topicPrefix}, nil
+}
 
-    def test_handle_frame_message_failed_decoding(self):
-        """
-        Test _handle_frame_message with failed frame decoding.
-        """
-        self.app.video_processor.decode_frame = Mock(return_value=None)
-        self.app.display_manager.update_camera_frame = Mock()
-        
-        self.app._handle_frame_message("cam1", b"invalid_data")
-        
-        self.app.video_processor.decode_frame.assert_called_once_with(b"invalid_data")
-        self.app.display_manager.update_camera_frame.assert_not_called()
+func (p *MQTTPublisher) Publish(ctx context.Context, cameraID string, payload []byte) error {
+	topic := p.topicPrefix + cameraID
+	token := p.client.Publish(topic, 1, false, payload)
+	sent := token.Wait()
+	if !sent {
+		return fmt.Errorf("o cliente MQTT não conseguiu enviar a mensagem")
+	}
+	if token.Error() != nil {
+		return fmt.Errorf("falha ao publicar no MQTT: %w", token.Error())
+	}
+	return nil
+}
 
-    def test_start_successful_connection(self):
-        """
-        Test start method with successful RabbitMQ connection.
-        """
-        self.app.consumer.connect = Mock(return_value=True)
-        self.app.consumer.start_consuming = Mock()
-        
-        result = self.app.start()
-        
-        assert result is True
-        assert self.app.is_running is True
-        self.app.consumer.connect.assert_called_once()
-        self.app.consumer.start_consuming.assert_called_once()
-
-    def test_start_failed_connection(self):
-        """
-        Test start method with failed RabbitMQ connection.
-        """
-        self.app.consumer.connect = Mock(return_value=False)
-        self.app.consumer.start_consuming = Mock()
-        
-        result = self.app.start()
-        
-        assert result is False
-        assert self.app.is_running is False
-        self.app.consumer.connect.assert_called_once()
-        self.app.consumer.start_consuming.assert_not_called()
-
-    def test_update_display(self):
-        """
-        Test _update_display method functionality.
-        """
-        test_frames = {"cam1": np.zeros((480, 640, 3), dtype=np.uint8)}
-        processed_frames = [np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(6)]
-        grid_display = np.zeros((960, 1920, 3), dtype=np.uint8)
-        
-        self.app.display_manager.get_camera_frames = Mock(return_value=test_frames)
-        self.app.video_processor.process_frames_for_grid = Mock(return_value=processed_frames)
-        self.app.video_processor.create_grid_display = Mock(return_value=grid_display)
-        self.app.display_manager.display_grid = Mock()
-        
-        self.app._update_display()
-        
-        self.app.display_manager.get_camera_frames.assert_called_once()
-        self.app.video_processor.process_frames_for_grid.assert_called_once_with(test_frames)
-        self.app.video_processor.create_grid_display.assert_called_once_with(processed_frames)
-        self.app.display_manager.display_grid.assert_called_once_with(grid_display)
-
-    def test_run_main_loop_normal_exit(self):
-        """
-        Test run_main_loop with normal exit condition.
-        """
-        self.app.is_running = True
-        self.app.consumer.process_data_events = Mock()
-        self.app.display_manager.has_camera_frames = Mock(return_value=False)
-        self.app.display_manager.check_exit_key = Mock(side_effect=[False, True])
-        self.app.stop = Mock()
-        
-        self.app.run_main_loop()
-        
-        assert self.app.consumer.process_data_events.call_count >= 1
-        self.app.stop.assert_called_once()
-
-    def test_run_main_loop_keyboard_interrupt(self):
-        """
-        Test run_main_loop with keyboard interrupt.
-        """
-        self.app.is_running = True
-        self.app.consumer.process_data_events = Mock(side_effect=KeyboardInterrupt)
-        self.app.consumer.handle_keyboard_interrupt = Mock()
-        self.app.stop = Mock()
-        
-        self.app.run_main_loop()
-        
-        self.app.consumer.handle_keyboard_interrupt.assert_called_once()
-        self.app.stop.assert_called_once()
-
-    def test_run_main_loop_with_display_update(self):
-        """
-        Test run_main_loop with display update.
-        """
-        self.app.is_running = True
-        self.app.consumer.process_data_events = Mock()
-        self.app.display_manager.has_camera_frames = Mock(side_effect=[True, False])
-        self.app.display_manager.check_exit_key = Mock(side_effect=[False, True])
-        self.app._update_display = Mock()
-        self.app.stop = Mock()
-        
-        self.app.run_main_loop()
-        
-        self.app._update_display.assert_called_once()
-
-    def test_stop(self):
-        """
-        Test stop method functionality.
-        """
-        self.app.is_running = True
-        self.app.display_manager.close_windows = Mock()
-        self.app.consumer.disconnect = Mock()
-        
-        self.app.stop()
-        
-        assert self.app.is_running is False
-        self.app.display_manager.close_windows.assert_called_once()
-        self.app.consumer.disconnect.assert_called_once()
-
-    def test_get_running_status_when_running(self):
-        """
-        Test get_running_status returns True when running.
-        """
-        self.app.is_running = True
-        
-        result = self.app.get_running_status()
-        
-        assert result is True
-
-    def test_get_running_status_when_not_running(self):
-        """
-        Test get_running_status returns False when not running.
-        """
-        self.app.is_running = False
-        
-        result = self.app.get_running_status()
-        
-        assert result is False
+func (p *MQTTPublisher) Close() error {
+	p.client.Disconnect(250)
+	return nil
+}
 </file>
 
-<file path="tests/test_video_processor.py">
-import pytest
-import numpy as np
-import cv2
-from unittest.mock import patch, Mock
-from src.display.video_processor import VideoFrameProcessor
+<file path="pkg/mq/publisher_mock.go">
+package mq
 
+import (
+	"context"
+	"testing"
 
-class TestVideoFrameProcessor:
-    """
-    Test class for VideoFrameProcessor functionality.
-    """
+	"github.com/stretchr/testify/assert"
+)
 
-    def setup_method(self):
-        """
-        Setup method called before each test.
-        """
-        self.processor = VideoFrameProcessor()
+type MockPublisher struct {
+	PublishFunc func(ctx context.Context, cameraID string, payload []byte) error
+	CloseFunc   func() error
+}
 
-    def test_video_processor_initialization_with_default_values(self):
-        """
-        Test VideoFrameProcessor initialization with default grid parameters.
-        """
-        assert self.processor.grid_width == 3
-        assert self.processor.grid_height == 2
-        assert self.processor.max_cameras == 6
-        assert self.processor.frame_width == 640
-        assert self.processor.frame_height == 480
+func (m *MockPublisher) Publish(ctx context.Context, cameraID string, payload []byte) error {
+	if m.PublishFunc != nil {
+		return m.PublishFunc(ctx, cameraID, payload)
+	}
+	return nil
+}
 
-    def test_video_processor_initialization_with_custom_values(self):
-        """
-        Test VideoFrameProcessor initialization with custom grid parameters.
-        """
-        custom_processor = VideoFrameProcessor(grid_width=4, grid_height=3)
-        
-        assert custom_processor.grid_width == 4
-        assert custom_processor.grid_height == 3
-        assert custom_processor.max_cameras == 12
+func (m *MockPublisher) Close() error {
+	if m.CloseFunc != nil {
+		return m.CloseFunc()
+	}
+	return nil
+}
 
-    @patch('cv2.imdecode')
-    @patch('numpy.frombuffer')
-    def test_decode_frame_successful_decoding(self, mock_frombuffer, mock_imdecode):
-        """
-        Test successful frame decoding from bytes.
-        """
-        test_data = b'fake_image_data'
-        mock_array = Mock()
-        mock_image = np.zeros((480, 640, 3), dtype=np.uint8)
-        
-        mock_frombuffer.return_value = mock_array
-        mock_imdecode.return_value = mock_image
-        
-        result = self.processor.decode_frame(test_data)
-        
-        mock_frombuffer.assert_called_once_with(test_data, np.uint8)
-        mock_imdecode.assert_called_once_with(mock_array, cv2.IMREAD_COLOR)
-        assert np.array_equal(result, mock_image)
+func TestMockPublisher(t *testing.T) {
+	var published bool
+	mock := &MockPublisher{
+		PublishFunc: func(ctx context.Context, cameraID string, payload []byte) error {
+			published = true
+			assert.Equal(t, "cam1", cameraID)
+			assert.Equal(t, []byte("test"), payload)
+			return nil
+		},
+	}
 
-    @patch('cv2.imdecode')
-    @patch('numpy.frombuffer')
-    def test_decode_frame_failed_decoding(self, mock_frombuffer, mock_imdecode):
-        """
-        Test frame decoding failure returns None.
-        """
-        test_data = b'invalid_image_data'
-        mock_array = Mock()
-        
-        mock_frombuffer.return_value = mock_array
-        mock_imdecode.return_value = None
-        
-        result = self.processor.decode_frame(test_data)
-        
-        assert result is None
+	err := mock.Publish(context.Background(), "cam1", []byte("test"))
+	assert.NoError(t, err)
+	assert.True(t, published)
+}
+</file>
 
-    @patch('cv2.imdecode')
-    @patch('numpy.frombuffer')
-    def test_decode_frame_exception_handling(self, mock_frombuffer, mock_imdecode):
-        """
-        Test frame decoding exception handling.
-        """
-        test_data = b'corrupt_data'
-        mock_frombuffer.side_effect = Exception("Decoding error")
-        
-        result = self.processor.decode_frame(test_data)
-        
-        assert result is None
+<file path="pkg/mq/publisher.go">
+package mq
 
-    @patch('cv2.resize')
-    def test_resize_frame(self, mock_resize):
-        """
-        Test frame resizing functionality.
-        """
-        input_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-        resized_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        
-        mock_resize.return_value = resized_frame
-        
-        result = self.processor.resize_frame(input_frame)
-        
-        mock_resize.assert_called_once_with(input_frame, (640, 480))
-        assert np.array_equal(result, resized_frame)
+import "context"
 
-    @patch('cv2.putText')
-    def test_add_camera_label(self, mock_putText):
-        """
-        Test adding camera label to frame.
-        """
-        input_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        camera_id = "cam1"
-        
-        result = self.processor.add_camera_label(input_frame, camera_id)
-        
-        mock_putText.assert_called_once()
-        assert isinstance(result, np.ndarray)
+type Publisher interface {
+	Publish(ctx context.Context, cameraID string, payload []byte) error
+	Close() error
+}
+</file>
 
-    @patch('cv2.putText')
-    def test_create_placeholder_frame(self, mock_putText):
-        """
-        Test creating placeholder frame for inactive cameras.
-        """
-        camera_number = 1
-        
-        result = self.processor.create_placeholder_frame(camera_number)
-        
-        assert result.shape == (480, 640, 3)
-        assert result.dtype == np.uint8
-        mock_putText.assert_called_once()
+<file path="pkg/util/compress.go">
+package util
 
-    @patch.object(VideoFrameProcessor, 'add_camera_label')
-    @patch.object(VideoFrameProcessor, 'resize_frame')
-    @patch.object(VideoFrameProcessor, 'create_placeholder_frame')
-    def test_process_frames_for_grid_with_all_cameras(self, mock_placeholder, mock_resize, mock_label):
-        """
-        Test processing frames when all camera slots are filled.
-        """
-        camera_frames = {
-            'cam1': np.zeros((720, 1280, 3), dtype=np.uint8),
-            'cam2': np.zeros((720, 1280, 3), dtype=np.uint8),
-            'cam3': np.zeros((720, 1280, 3), dtype=np.uint8),
-            'cam4': np.zeros((720, 1280, 3), dtype=np.uint8),
-            'cam5': np.zeros((720, 1280, 3), dtype=np.uint8),
-            'cam6': np.zeros((720, 1280, 3), dtype=np.uint8)
-        }
-        
-        resized_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        labeled_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        
-        mock_resize.return_value = resized_frame
-        mock_label.return_value = labeled_frame
-        
-        result = self.processor.process_frames_for_grid(camera_frames)
-        
-        assert len(result) == 6
-        assert mock_resize.call_count == 6
-        assert mock_label.call_count == 6
-        assert not mock_placeholder.called
+import (
+	"bytes"
+	"fmt"
 
-    @patch.object(VideoFrameProcessor, 'add_camera_label')
-    @patch.object(VideoFrameProcessor, 'resize_frame')
-    @patch.object(VideoFrameProcessor, 'create_placeholder_frame')
-    def test_process_frames_for_grid_with_partial_cameras(self, mock_placeholder, mock_resize, mock_label):
-        """
-        Test processing frames when only some camera slots are filled.
-        """
-        camera_frames = {
-            'cam1': np.zeros((720, 1280, 3), dtype=np.uint8),
-            'cam2': np.zeros((720, 1280, 3), dtype=np.uint8)
-        }
-        
-        resized_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        labeled_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        placeholder_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        
-        mock_resize.return_value = resized_frame
-        mock_label.return_value = labeled_frame
-        mock_placeholder.return_value = placeholder_frame
-        
-        result = self.processor.process_frames_for_grid(camera_frames)
-        
-        assert len(result) == 6
-        assert mock_resize.call_count == 2
-        assert mock_label.call_count == 2
-        assert mock_placeholder.call_count == 4
+	zstd "github.com/klauspost/compress/zstd"
+)
 
-    @patch('numpy.vstack')
-    @patch('numpy.hstack')
-    def test_create_grid_display_success(self, mock_hstack, mock_vstack):
-        """
-        Test successful grid display creation.
-        """
-        processed_frames = [np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(6)]
-        row_frame = np.zeros((480, 1920, 3), dtype=np.uint8)
-        grid_frame = np.zeros((960, 1920, 3), dtype=np.uint8)
-        
-        mock_hstack.return_value = row_frame
-        mock_vstack.return_value = grid_frame
-        
-        result = self.processor.create_grid_display(processed_frames)
-        
-        assert mock_hstack.call_count == 2
-        mock_vstack.assert_called_once()
-        assert np.array_equal(result, grid_frame)
+type Compressor struct {
+	encoder *zstd.Encoder
+	level   int
+}
 
-    def test_create_grid_display_invalid_frame_count(self):
-        """
-        Test grid display creation with invalid frame count raises ValueError.
-        """
-        invalid_frames = [np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(4)]
-        
-        with pytest.raises(ValueError, match="Expected 6 frames, got 4"):
-            self.processor.create_grid_display(invalid_frames)
+func NewCompressor(level int) (*Compressor, error) {
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(level)))
+	if err != nil {
+		return nil, fmt.Errorf("zstd new writer: %w", err)
+	}
+	return &Compressor{encoder: enc, level: level}, nil
+}
+
+func (c *Compressor) Compress(data []byte) ([]byte, error) {
+	var b bytes.Buffer
+	w, err := zstd.NewWriter(&b)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := w.Write(data); err != nil {
+		w.Close()
+		return nil, err
+	}
+	w.Close()
+	return b.Bytes(), nil
+}
+
+func Decompress(data []byte) ([]byte, error) {
+	r, err := zstd.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	var out bytes.Buffer
+	_, err = out.ReadFrom(r)
+	if err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
 </file>
 
 <file path=".dockerignore">
@@ -2674,404 +1948,52 @@ main_refactored.py
 test_consumer.py
 </file>
 
-<file path="main_refactored.py">
-from src.config.config_manager import ConfigManager
-from src.video_consumer_app import VideoConsumerApplication
+<file path="LICENSE">
+MIT License
 
+Copyright (c) 2025 T3-Labs
 
-def main() -> None:
-    """
-    Main entry point for the video consumer application.
-    """
-    config_manager = ConfigManager()
-    video_app = VideoConsumerApplication(config_manager)
-    
-    if video_app.start():
-        video_app.run_main_loop()
-    else:
-        print("Failed to start video consumer application.")
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-if __name__ == '__main__':
-    main()
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 </file>
 
-<file path="Makefile">
-.PHONY: help install test lint format run clean dev-setup
-
-help: ## Mostrar esta ajuda
-	@echo "Comandos disponíveis:"
-	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
-
-install: ## Instalar dependências
-	uv sync --dev
-
-test: ## Executar testes
-	uv run pytest
-
-test-cov: ## Executar testes com cobertura
-	uv run pytest --cov=src --cov-report=term-missing --cov-report=html
-
-lint: ## Verificar código com ruff
-	uv run ruff check src/ tests/
-
-format: ## Formatar código com ruff
-	uv run ruff format src/ tests/
-
-format-check: ## Verificar formatação sem alterar
-	uv run ruff format --check src/ tests/
-
-run: ## Executar aplicação refatorada
-	uv run python main_refactored.py
-
-run-original: ## Executar aplicação original
-	python test_consumer.py
-
-clean: ## Limpar arquivos temporários
-	find . -type f -name "*.pyc" -delete
-	find . -type d -name "__pycache__" -delete
-	find . -type d -name "*.egg-info" -exec rm -rf {} +
-	rm -rf .pytest_cache/
-	rm -rf htmlcov/
-	rm -rf .coverage
-
-dev-setup: ## Configurar ambiente de desenvolvimento
-	./setup-dev.sh
-
-docker-up: ## Subir containers Docker
-	docker compose up -d
-
-docker-down: ## Parar containers Docker
-	docker compose down
-
-docker-logs: ## Ver logs dos containers
-	docker compose logs -f
-</file>
-
-<file path="setup-dev.sh">
-#!/bin/bash
-
-# Script para configurar ambiente de desenvolvimento
-
-set -e
-
-echo "🚀 Configurando ambiente de desenvolvimento Edge Video..."
-
-# Verifica se uv está instalado
-if ! command -v uv &> /dev/null; then
-    echo "❌ uv não encontrado. Instale o uv primeiro:"
-    echo "curl -LsSf https://astral.sh/uv/install.sh | sh"
-    exit 1
-fi
-
-# Sincroniza dependências
-echo "📦 Instalando dependências..."
-uv sync --dev
-
-# Executa testes
-echo "🧪 Executando testes..."
-uv run pytest --cov=src --cov-report=term-missing
-
-# Executa linting
-echo "🔍 Executando linting..."
-uv run ruff check src/
-uv run ruff format --check src/
-
-echo "✅ Ambiente configurado com sucesso!"
-echo ""
-echo "📝 Comandos úteis:"
-echo "  uv run pytest               # Executar testes"
-echo "  uv run pytest --cov=src     # Testes com cobertura"
-echo "  uv run ruff check src/       # Verificar código"
-echo "  uv run ruff format src/      # Formatar código"
-echo "  uv run python main_refactored.py  # Executar aplicação"
-</file>
-
-<file path=".github/workflows/build-and-push.yml">
-name: Docker CI/CD para GitHub Container Registry
-
-on:
-  push:
-    branches:
-      - main
-  release:
-    types: [published, created]
-  workflow_dispatch:
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
-jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout do código
-        uses: actions/checkout@v4
-
-      # 1. Configurar Docker Buildx
-      - name: Configurar Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # 2. Fazer login no GitHub Container Registry
-      - name: Login no GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # 3. Converter nome do repositório para minúsculas
-      - name: Converter repositório para minúsculas
-        run: |
-          echo "IMAGE_NAME_LC=${IMAGE_NAME,,}" >> $GITHUB_ENV
-        env:
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
-
-      # 4. Definir tags manualmente
-      - name: Definir tags da imagem
-        id: tags
-        run: |
-          IMAGE_BASE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}"
-          
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            # Para releases: versão + latest
-            VERSION="${{ github.event.release.tag_name }}"
-            VERSION=${VERSION#v}  # Remove 'v' se existir
-            echo "TAGS=${IMAGE_BASE}:${VERSION},${IMAGE_BASE}:latest" >> $GITHUB_ENV
-          else
-            # Para push normal: branch + latest (se for main)
-            if [[ "${{ github.ref_name }}" == "main" ]]; then
-              echo "TAGS=${IMAGE_BASE}:main,${IMAGE_BASE}:latest" >> $GITHUB_ENV
-            else
-              echo "TAGS=${IMAGE_BASE}:${{ github.ref_name }}" >> $GITHUB_ENV
-            fi
-          fi
-
-      # 5. Construir e enviar imagem Docker
-      - name: Construir e enviar imagem Docker
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ env.TAGS }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Push da imagem bem-sucedido
-        run: |
-          echo "✅ Imagens Docker enviadas para o GitHub Container Registry:"
-          echo ""
-          echo "🏷️ Tags criadas:"
-          echo "${{ env.TAGS }}" | tr ',' '\n' | sed 's/^/  - /'
-          echo ""
-          echo "🚀 Deploy pronto!"
-          echo "📖 Para usar: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
-</file>
-
-<file path="internal/mq/amqp.go">
-package mq
-
-import (
-	"context"
-	"fmt"
-	"time"
-
-	"github.com/streadway/amqp"
-)
-
-type AMQPPublisher struct {
-	conn             *amqp.Connection
-	channel          *amqp.Channel
-	exchange         string
-	routingKeyPrefix string
-}
-
-func NewAMQPPublisher(amqpURL, exchange, routingKeyPrefix string) (*AMQPPublisher, error) {
-	conn, err := amqp.Dial(amqpURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
-	}
-
-	ch, err := conn.Channel()
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to open a channel: %w", err)
-	}
-
-	err = ch.ExchangeDeclare(
-		exchange, // name
-		"topic",  // type
-		true,     // durable
-		false,    // auto-deleted
-		false,    // internal
-		false,    // no-wait
-		nil,      // arguments
-	)
-	if err != nil {
-		ch.Close()
-		conn.Close()
-		return nil, fmt.Errorf("failed to declare an exchange: %w", err)
-	}
-
-	return &AMQPPublisher{
-		conn:             conn,
-		channel:          ch,
-		exchange:         exchange,
-		routingKeyPrefix: routingKeyPrefix,
-	}, nil
-}
-
-func (p *AMQPPublisher) Publish(ctx context.Context, cameraID string, payload []byte) error {
-	routingKey := p.routingKeyPrefix + "." + cameraID
-	err := p.channel.Publish(
-		p.exchange,   // exchange
-		routingKey,   // routing key
-		false,        // mandatory
-		false,        // immediate
-		amqp.Publishing{
-			ContentType: "application/octet-stream",
-			Body:        payload,
-			Timestamp:   time.Now(),
-		})
-	if err != nil {
-		return fmt.Errorf("failed to publish a message: %w", err)
-	}
-	return nil
-}
-
-func (p *AMQPPublisher) Close() error {
-	if p.channel != nil {
-		p.channel.Close()
-	}
-	if p.conn != nil {
-		return p.conn.Close()
-	}
-	return nil
-}
-</file>
-
-<file path="internal/mq/mqtt.go">
-package mq
-
-import (
-	"context"
-	"fmt"
-	"log"
-
-	mqtt "github.com/eclipse/paho.mqtt.golang"
-)
-
-type MQTTPublisher struct {
-	client      mqtt.Client
-	topicPrefix string
-}
-
-func NewMQTTPublisher(broker, topicPrefix string) (*MQTTPublisher, error) {
-	opts := mqtt.NewClientOptions().AddBroker(broker)
-	opts.SetAutoReconnect(true)
-	opts.SetConnectRetry(true)
-
-	client := mqtt.NewClient(opts)
-	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		return nil, fmt.Errorf("mqtt connect: %w", token.Error())
-	}
-	log.Println("Conectado ao broker MQTT")
-	return &MQTTPublisher{client: client, topicPrefix: topicPrefix}, nil
-}
-
-func (p *MQTTPublisher) Publish(ctx context.Context, cameraID string, payload []byte) error {
-	topic := p.topicPrefix + "/" + cameraID
-	token := p.client.Publish(topic, 1, false, payload)
-	sent := token.Wait()
-	if !sent {
-		return fmt.Errorf("o cliente MQTT não conseguiu enviar a mensagem")
-	}
-	if token.Error() != nil {
-		return fmt.Errorf("falha ao publicar no MQTT: %w", token.Error())
-	}
-	return nil
-}
-
-func (p *MQTTPublisher) Close() error {
-	p.client.Disconnect(250)
-	return nil
-}
-</file>
-
-<file path="internal/mq/publisher.go">
-package mq
-
-import "context"
-
-// Publisher provides an abstraction for sending messages from captures.
-type Publisher interface {
-	Publish(ctx context.Context, cameraID string, payload []byte) error
-	Close() error
-}
-</file>
-
-<file path="internal/util/compress.go">
-package util
-
-
-import (
-"bytes"
-"fmt"
-
-
-zstdpkg "github.com/klauspost/compress/zstd"
-)
-
-
-// Compressor wraps a zstd encoder for reuse.
-type Compressor struct {
-encoder *zstdpkg.Encoder
-level int
-}
-
-
-// NewCompressor cria um novo compressor. Level 1..22 (zstd library maps levels internally).
-func NewCompressor(level int) (*Compressor, error) {
-enc, err := zstdpkg.NewWriter(nil, zstdpkg.WithEncoderLevel(zstdpkg.EncoderLevelFromZstd(level)))
-if err != nil {
-return nil, fmt.Errorf("zstd new writer: %w", err)
-}
-return &Compressor{encoder: enc, level: level}, nil
-}
-
-
-func (c *Compressor) Compress(data []byte) ([]byte, error) {
-var b bytes.Buffer
-w, err := zstdpkg.NewWriter(&b)
-if err != nil {
-return nil, err
-}
-if _, err := w.Write(data); err != nil {
-w.Close()
-return nil, err
-}
-w.Close()
-return b.Bytes(), nil
-}
-
-
-func Decompress(data []byte) ([]byte, error) {
-	r, err := zstdpkg.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-	var out bytes.Buffer
-	_, err = out.ReadFrom(r)
-	if err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
-}
+<file path="LICENSE.MD">
+MIT License
+
+Copyright (c) 2025 T3-Labs
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 </file>
 
 <file path=".env.example">
@@ -3119,6 +2041,8 @@ LOG_LEVEL=INFO
 *.dll
 *.so
 *.dylib
+
+test_consumer.py
 
 # Test binary, built with `go test -c`
 *.test
@@ -4107,8 +3031,46 @@ FodyWeavers.xsd
 # End of https://www.toptal.com/developers/gitignore/api/go,vs,visualstudio,pycharm,pycharm+iml,pycharm+all,goland,goland+all,goland+iml
 </file>
 
-<file path=".python-version">
-3.11
+<file path="docker-compose.yml">
+version: '3.8'
+
+services:
+  camera-collector:
+    build: .
+    container_name: camera-collector
+    restart: unless-stopped
+    volumes:
+      # Monta o config.yaml (pode ser customizado via variável de ambiente)
+      - ${CONFIG_PATH:-./config.yaml}:/app/config.yaml
+    depends_on:
+      - rabbitmq
+    # Opcional: descomente se precisar que a rede do host seja usada
+    # network_mode: "host"
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    image: "rabbitmq:3.13-management-alpine"
+    container_name: rabbitmq
+    ports:
+      # Porta para o protocolo AMQP
+      - "5672:5672"
+      # Porta para a interface de gerenciamento web
+      - "15672:15672"
+    volumes:
+      # Persiste os dados do RabbitMQ
+      - rabbitmq_data:/var/lib/rabbitmq/
+    environment:
+      - RABBITMQ_DEFAULT_USER=user
+      - RABBITMQ_DEFAULT_PASS=password
+      - RABBITMQ_DEFAULT_VHOST=guard_vhost
+
+volumes:
+  rabbitmq_data:
 </file>
 
 <file path="run-docker.sh">
@@ -4196,473 +3158,9 @@ echo "  docker rm $COLLECTOR_CONTAINER $RABBITMQ_CONTAINER    # Remover containe
 echo ""
 </file>
 
-<file path="docker-compose.yml">
-version: '3.8'
-
-services:
-  camera-collector:
-    build: .
-    container_name: camera-collector
-    restart: unless-stopped
-    volumes:
-      # Monta o config.yaml (pode ser customizado via variável de ambiente)
-      - ${CONFIG_PATH:-./config.yaml}:/app/config.yaml
-    depends_on:
-      - rabbitmq
-    # Opcional: descomente se precisar que a rede do host seja usada
-    # network_mode: "host"
-
-  rabbitmq:
-    image: "rabbitmq:3.13-management-alpine"
-    container_name: rabbitmq
-    ports:
-      # Porta para o protocolo AMQP
-      - "5672:5672"
-      # Porta para a interface de gerenciamento web
-      - "15672:15672"
-    volumes:
-      # Persiste os dados do RabbitMQ
-      - rabbitmq_data:/var/lib/rabbitmq/
-    environment:
-      - RABBITMQ_DEFAULT_USER=user
-      - RABBITMQ_DEFAULT_PASS=password
-      - RABBITMQ_DEFAULT_VHOST=guard_vhost
-
-volumes:
-  rabbitmq_data:
-</file>
-
-<file path="main.go">
-package main
-
-import (
-	"context"
-	"log"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
-	"github.com/T3-Labs/edge-video/internal/camera"
-	"github.com/T3-Labs/edge-video/internal/mq"
-	"github.com/T3-Labs/edge-video/internal/util"
-
-	"github.com/spf13/viper"
-)
-
-type CameraConfig struct {
-	ID  string `mapstructure:"id"`
-	URL string `mapstructure:"url"`
-}
-
-
-type Config struct {
-	IntervalMS          int `mapstructure:"interval_ms"`
-	ProcessEveryNFrames int `mapstructure:"process_every_n_frames"`
-	Protocol            string `mapstructure:"protocol"`
-	AMQP                struct {
-		AmqpURL          string `mapstructure:"amqp_url"`
-		Exchange         string `mapstructure:"exchange"`
-		RoutingKeyPrefix string `mapstructure:"routing_key_prefix"`
-	} `mapstructure:"amqp"`
-	MQTT struct {
-		Broker      string `mapstructure:"broker"`
-		TopicPrefix string `mapstructure:"topic_prefix"`
-	} `mapstructure:"mqtt"`
-	Compression struct {
-		Enabled bool `mapstructure:"enabled"`
-		Level   int  `mapstructure:"level"`
-	} `mapstructure:"compression"`
-	Cameras []CameraConfig `mapstructure:"cameras"`
-}
-
-
-func loadConfig() (*Config, error) {
-viper.SetConfigFile("config.yaml")
-if err := viper.ReadInConfig(); err != nil {
-return nil, err
-}
-var cfg Config
-if err := viper.Unmarshal(&cfg); err != nil {
-return nil, err
-}
-return &cfg, nil
-}
-
-
-func main() {
-cfg, err := loadConfig()
-if err != nil {
-log.Fatalf("erro ao carregar config: %v", err)
-}
-
-
-interval := time.Duration(cfg.IntervalMS) * time.Millisecond
-
-
-// cria publisher
-var publisher mq.Publisher
-if cfg.Protocol == "mqtt" {
-p, err := mq.NewMQTTPublisher(cfg.MQTT.Broker, cfg.MQTT.TopicPrefix)
-if err != nil {
-log.Fatalf("erro criar mqtt publisher: %v", err)
-}
-publisher = p
-} else {
-p, err := mq.NewAMQPPublisher(cfg.AMQP.AmqpURL, cfg.AMQP.Exchange, cfg.AMQP.RoutingKeyPrefix)
-if err != nil {
-log.Fatalf("erro criar amqp publisher: %v", err)
-}
-publisher = p
-}
-defer publisher.Close()
-
-
-// compressor
-var compressor *util.Compressor
-if cfg.Compression.Enabled {
-comp, err := util.NewCompressor(cfg.Compression.Level)
-if err != nil {
-log.Fatalf("erro criar compressor: %v", err)
-}
-compressor = comp
-}
-
-
-ctx, cancel := context.WithCancel(context.Background())
-defer cancel()
-
-
-// start captures
-for _, camCfg := range cfg.Cameras {
-cap := camera.NewCapture(ctx, camera.CameraConfig{ID: camCfg.ID, URL: camCfg.URL}, interval, compressor, publisher)
-cap.Start()
-}
-
-
-// handle shutdown
-sig := make(chan os.Signal, 1)
-signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-<-sig
-log.Println("recebido sinal, finalizando...")
-cancel()
-// small wait to let goroutines finish
-time.Sleep(500 * time.Millisecond)
-}
-</file>
-
-<file path="pyproject.toml">
-[project]
-name = "edge-guard-ai"
-version = "0.1.0"
-description = "Edge video processing system with RabbitMQ integration"
-readme = "README.md"
-requires-python = ">=3.11"
-dependencies = [
-    "opencv-python>=4.12.0.88",
-    "pika>=1.3.2",
-    "zstandard>=0.25.0",
-    "numpy>=1.24.0",
-]
-
-[project.urls]
-repository = "https://github.com/T3-Labs/edge-video.git"
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "pytest-mock>=3.10.0",
-    "ruff>=0.1.0",
-]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-    "--cov=src",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "-v"
-]
-
-[tool.ruff]
-line-length = 88
-target-version = "py311"
-
-[tool.ruff.lint]
-select = [
-    "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
-    "F",  # pyflakes
-    "I",  # isort
-    "B",  # flake8-bugbear
-    "C4", # flake8-comprehensions
-    "UP", # pyupgrade
-]
-ignore = []
-
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-skip-magic-trailing-comma = false
-line-ending = "auto"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src"]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-</file>
-
-<file path="test_consumer.py">
-import pika
-import sys
-import os
-import cv2
-import numpy as np
-
-RABBITMQ_HOST = 'localhost'
-RABBITMQ_PORT = 5672
-RABBITMQ_VHOST = 'guard_vhost'
-RABBITMQ_USER = 'user'
-RABBITMQ_PASS = 'password'
-EXCHANGE_NAME = 'carnes_nobres'
-ROUTING_KEY = 'camera.#'
-QUEUE_NAME = 'test_consumer_queue'
-
-camera_windows = {}
-camera_frames = {}  # Armazena os últimos frames de cada câmera
-
-def on_message_received(ch, method, properties, body):
-    camera_id = method.routing_key.replace('camera.', '')  # Limpa o prefixo
-    print(f" [x] Recebido frame da câmera '{camera_id}'. Tamanho: {len(body)} bytes")
-
-    # Decodifica o frame como imagem (JPEG/PNG) sem descompressão
-    try:
-        np_arr = np.frombuffer(body, np.uint8)
-        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        if img is not None:
-            camera_frames[camera_id] = img
-            camera_windows[camera_id] = True
-        else:
-            print(f" [!] Não foi possível decodificar o frame da câmera '{camera_id}'.")
-    except Exception as e:
-        print(f" [!] Erro ao decodificar imagem da câmera '{camera_id}': {e}")
-
-def main():
-    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
-    parameters = pika.ConnectionParameters(
-        host=RABBITMQ_HOST,
-        port=RABBITMQ_PORT,
-        virtual_host=RABBITMQ_VHOST,
-        credentials=credentials
-    )
-
-    try:
-        connection = pika.BlockingConnection(parameters)
-        channel = connection.channel()
-        channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type='topic', durable=True)
-        result = channel.queue_declare(queue=QUEUE_NAME, exclusive=True, durable=False)
-        queue_name = result.method.queue
-        print(f"[*] Fila '{queue_name}' criada. Aguardando por frames...")
-        channel.queue_bind(exchange=EXCHANGE_NAME, queue=queue_name, routing_key=ROUTING_KEY)
-        channel.basic_consume(queue=queue_name, on_message_callback=on_message_received, auto_ack=True)
-
-        print("[INFO] Pressione 'q' em qualquer janela para sair.")
-        while True:
-            try:
-                channel.connection.process_data_events(time_limit=0.1)
-                
-                # Concatena os frames em uma grade 2x3 (6 câmeras)
-                if len(camera_frames) > 0:
-                    # Cria uma lista ordenada de frames
-                    cam_ids = sorted(camera_frames.keys())
-                    frames_list = []
-                    
-                    for cam_id in cam_ids[:6]:  # Limita a 6 câmeras
-                        frame = camera_frames[cam_id]
-                        # Redimensiona para 640x480 para uniformidade
-                        resized = cv2.resize(frame, (640, 480))
-                        # Adiciona texto com o ID da câmera
-                        cv2.putText(resized, cam_id, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
-                                    1, (0, 255, 0), 2, cv2.LINE_AA)
-                        frames_list.append(resized)
-                    
-                    # Preenche com frames pretos se houver menos de 6 câmeras
-                    while len(frames_list) < 6:
-                        black_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-                        cv2.putText(black_frame, f"Cam{len(frames_list)+1}", (250, 240), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
-                        frames_list.append(black_frame)
-                    
-                    # Concatena em grade 2x3
-                    row1 = np.hstack(frames_list[0:3])
-                    row2 = np.hstack(frames_list[3:6])
-                    grid = np.vstack([row1, row2])
-                    
-                    cv2.imshow('Cameras Grid (2x3)', grid)
-                
-                # Verifica se a tecla 'q' foi pressionada
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    print("Saindo por comando do usuário.")
-                    break
-            except KeyboardInterrupt:
-                print('Interrompido pelo usuário. Encerrando.')
-                break
-        cv2.destroyAllWindows()
-
-    except pika.exceptions.AMQPConnectionError as e:
-        print(f"Erro de conexão com o RabbitMQ: {e}")
-        print("Verifique se o host, porta, vhost e credenciais estão corretos e se o contêiner do RabbitMQ está em execução.")
-    except KeyboardInterrupt:
-        print('Interrompido pelo usuário. Encerrando.')
-        try:
-            sys.exit(0)
-        except SystemExit:
-            os._exit(0)
-
-if __name__ == '__main__':
-    main()
-</file>
-
-<file path="internal/camera/camera.go">
-package camera
-
-import (
-	"bytes"
-	"context"
-	"log"
-	"os/exec"
-	"time"
-
-	"github.com/T3-Labs/edge-video/internal/mq"
-	"github.com/T3-Labs/edge-video/internal/util"
-)
-
-type CameraConfig struct {
-	ID  string
-	URL string
-}
-
-type Capture struct {
-	ctx        context.Context
-	config     CameraConfig
-	interval   time.Duration
-	compressor *util.Compressor
-	publisher  mq.Publisher
-}
-
-func NewCapture(ctx context.Context, config CameraConfig, interval time.Duration, compressor *util.Compressor, publisher mq.Publisher) *Capture {
-	return &Capture{
-		ctx:        ctx,
-		config:     config,
-		interval:   interval,
-		compressor: compressor,
-		publisher:  publisher,
-	}
-}
-
-func (c *Capture) Start() {
-	go func() {
-		ticker := time.NewTicker(c.interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-c.ctx.Done():
-				log.Printf("parando captura para camera %s", c.config.ID)
-				return
-			case <-ticker.C:
-				c.captureAndPublish()
-			}
-		}
-	}()
-}
-
-func (c *Capture) captureAndPublish() {
-	// Captura um frame da câmera RTSP usando FFmpeg
-	// Comando: ffmpeg -rtsp_transport tcp -i <URL> -frames:v 1 -f image2pipe -vcodec mjpeg -
-	cmd := exec.CommandContext(
-		c.ctx,
-		"ffmpeg",
-		"-rtsp_transport", "tcp",
-		"-i", c.config.URL,
-		"-frames:v", "1",
-		"-f", "image2pipe",
-		"-vcodec", "mjpeg",
-		"-q:v", "5",
-		"-",
-	)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		log.Printf("erro ao capturar frame da câmera %s: %v (stderr: %s)", c.config.ID, err, stderr.String())
-		return
-	}
-
-	frameData := stdout.Bytes()
-	if len(frameData) == 0 {
-		log.Printf("frame vazio capturado da câmera %s", c.config.ID)
-		return
-	}
-
-	log.Printf("capturado frame da camera %s (%d bytes)", c.config.ID, len(frameData))
-
-	// Publica o frame JPEG no RabbitMQ
-	err = c.publisher.Publish(c.ctx, c.config.ID, frameData)
-	if err != nil {
-		log.Printf("erro ao publicar frame da câmera %s: %v", c.config.ID, err)
-	}
-}
-</file>
-
-<file path="go.mod">
-module github.com/T3-Labs/edge-video
-
-go 1.24.0
-
-toolchain go1.24.9
-
-require (
-	github.com/disintegration/imaging v1.6.2
-	github.com/eclipse/paho.mqtt.golang v1.5.1
-	github.com/klauspost/compress v1.18.1
-	github.com/spf13/viper v1.21.0
-	github.com/streadway/amqp v1.1.0
-)
-
-require (
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
-	github.com/sagikazarmark/locafero v0.11.0 // indirect
-	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
-	github.com/spf13/afero v1.15.0 // indirect
-	github.com/spf13/cast v1.10.0 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
-	github.com/subosito/gotenv v1.6.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/net v0.44.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/sys v0.36.0 // indirect
-	golang.org/x/text v0.29.0 // indirect
-)
-</file>
-
 <file path="config.yaml">
-interval_ms: 500
+target_fps: 30 # FPS desejado para captura (frames por segundo)
 protocol: amqp # amqp | mqtt
-
-process_every_n_frames: 1 # Processa 1 a cada 1 frames (ex: 30fps -> 30fps)
 
 amqp:
   amqp_url: "amqp://user:password@rabbitmq:5672/guard_vhost"
@@ -4685,6 +3183,57 @@ cameras:
     url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=4&subtype=0"
   - id: "cam5"
     url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=5&subtype=0"
+
+redis:
+  enabled: true
+  address: "redis:6379"
+  ttl_seconds: 300
+  prefix: "frames"
+
+metadata:
+  enabled: true
+  exchange: "camera.metadata"
+  routing_key: "camera.metadata.event"
+</file>
+
+<file path="go.mod">
+module github.com/T3-Labs/edge-video
+
+go 1.24.0
+
+toolchain go1.24.9
+
+require (
+	github.com/eclipse/paho.mqtt.golang v1.5.1
+	github.com/go-redis/redis/v8 v8.11.5
+	github.com/klauspost/compress v1.18.1
+	github.com/spf13/viper v1.21.0
+	github.com/streadway/amqp v1.1.0
+	github.com/stretchr/testify v1.11.1
+)
+
+require (
+	github.com/cespare/xxhash/v2 v2.1.2 // indirect
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/sagikazarmark/locafero v0.11.0 // indirect
+	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
+	github.com/spf13/afero v1.15.0 // indirect
+	github.com/spf13/cast v1.10.0 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/subosito/gotenv v1.6.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	golang.org/x/net v0.44.0 // indirect
+	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/sys v0.36.0 // indirect
+	golang.org/x/text v0.29.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
+)
 </file>
 
 <file path="Dockerfile">
@@ -4704,7 +3253,7 @@ RUN go mod download
 RUN go mod tidy
 
 # Construir a aplicação sem CGO
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /camera-collector main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /camera-collector ./cmd/edge-video
 
 # Stage 2: Final image
 FROM alpine:latest

@@ -9,9 +9,24 @@ services:
       # Monta o config.yaml (pode ser customizado via variável de ambiente)
       - ${CONFIG_PATH:-./config.yaml}:/app/config.yaml
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_started
     # Opcional: descomente se precisar que a rede do host seja usada
     # network_mode: "host"
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   rabbitmq:
     image: "rabbitmq:3.13-management-alpine"
@@ -28,6 +43,12 @@ services:
       - RABBITMQ_DEFAULT_USER=user
       - RABBITMQ_DEFAULT_PASS=password
       - RABBITMQ_DEFAULT_VHOST=guard_vhost
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 volumes:
   rabbitmq_data:
