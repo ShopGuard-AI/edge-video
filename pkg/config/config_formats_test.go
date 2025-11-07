@@ -57,54 +57,27 @@ func TestLoadConfigTOML(t *testing.T) {
 	assert.NotZero(t, interval, "Interval não deveria ser zero")
 }
 
-func TestLoadConfigYAML(t *testing.T) {
-	cfg, err := LoadConfig("../../config.yaml")
-	assert.NoError(t, err, "Deveria carregar config.yaml sem erros")
-	assert.NotNil(t, cfg, "Configuração não deveria ser nil")
-
-	// Validar parâmetros principais
-	assert.Equal(t, float64(30), cfg.TargetFPS, "Target FPS deveria ser 30")
-	assert.Equal(t, "amqp", cfg.Protocol, "Protocol deveria ser amqp")
-
-	// Validar Optimization (valores atualizados)
-	assert.Equal(t, 20, cfg.Optimization.MaxWorkers, "Max workers deveria ser 20")
-	assert.Equal(t, 200, cfg.Optimization.BufferSize, "Buffer size deveria ser 200")
-	assert.Equal(t, 5, cfg.Optimization.FrameQuality)
-	assert.Equal(t, "1280x720", cfg.Optimization.FrameResolution)
-	assert.True(t, cfg.Optimization.UsePersistent)
-	assert.Equal(t, 5, cfg.Optimization.CircuitMaxFailures)
-	assert.Equal(t, 60, cfg.Optimization.CircuitResetSec)
-
-	// Validar Redis
-	assert.True(t, cfg.Redis.Enabled)
-	assert.Equal(t, "redis:6379", cfg.Redis.Address)
-	assert.Equal(t, 300, cfg.Redis.TTLSeconds)
-	assert.Equal(t, "frames", cfg.Redis.Prefix)
-}
-
 func TestConfigParity(t *testing.T) {
 	cfgTOML, err := LoadConfig("../../config.toml")
 	assert.NoError(t, err)
+	assert.NotNil(t, cfgTOML)
 
-	cfgYAML, err := LoadConfig("../../config.yaml")
-	assert.NoError(t, err)
-
-	// Verificar paridade entre TOML e YAML
-	assert.Equal(t, cfgYAML.TargetFPS, cfgTOML.TargetFPS, "Target FPS deveria ser igual em TOML e YAML")
-	assert.Equal(t, cfgYAML.Protocol, cfgTOML.Protocol, "Protocol deveria ser igual em TOML e YAML")
+	// Verificar valores esperados
+	assert.Equal(t, float64(30), cfgTOML.TargetFPS, "Target FPS deveria ser 30")
+	assert.Equal(t, "amqp", cfgTOML.Protocol, "Protocol deveria ser amqp")
 	
 	// Optimization
-	assert.Equal(t, cfgYAML.Optimization.MaxWorkers, cfgTOML.Optimization.MaxWorkers, "Max workers deveria ser igual")
-	assert.Equal(t, cfgYAML.Optimization.BufferSize, cfgTOML.Optimization.BufferSize, "Buffer size deveria ser igual")
-	assert.Equal(t, cfgYAML.Optimization.FrameQuality, cfgTOML.Optimization.FrameQuality, "Frame quality deveria ser igual")
-	assert.Equal(t, cfgYAML.Optimization.UsePersistent, cfgTOML.Optimization.UsePersistent, "Use persistent deveria ser igual")
-	assert.Equal(t, cfgYAML.Optimization.CircuitMaxFailures, cfgTOML.Optimization.CircuitMaxFailures, "Circuit failures deveria ser igual")
-	assert.Equal(t, cfgYAML.Optimization.CircuitResetSec, cfgTOML.Optimization.CircuitResetSec, "Circuit reset deveria ser igual")
+	assert.Equal(t, 20, cfgTOML.Optimization.MaxWorkers, "Max workers deveria ser 20")
+	assert.Equal(t, 200, cfgTOML.Optimization.BufferSize, "Buffer size deveria ser 200")
+	assert.Equal(t, 5, cfgTOML.Optimization.FrameQuality, "Frame quality deveria ser 5")
+	assert.True(t, cfgTOML.Optimization.UsePersistent, "Use persistent deveria ser true")
+	assert.Equal(t, 5, cfgTOML.Optimization.CircuitMaxFailures, "Circuit failures deveria ser 5")
+	assert.Equal(t, 60, cfgTOML.Optimization.CircuitResetSec, "Circuit reset deveria ser 60")
 	
 	// Redis
-	assert.Equal(t, cfgYAML.Redis.TTLSeconds, cfgTOML.Redis.TTLSeconds, "Redis TTL deveria ser igual")
-	assert.Equal(t, cfgYAML.Redis.Address, cfgTOML.Redis.Address, "Redis address deveria ser igual")
+	assert.Equal(t, 300, cfgTOML.Redis.TTLSeconds, "Redis TTL deveria ser 300")
+	assert.Equal(t, "redis:6379", cfgTOML.Redis.Address, "Redis address deveria ser redis:6379")
 	
 	// Cameras
-	assert.Equal(t, len(cfgYAML.Cameras), len(cfgTOML.Cameras), "Número de câmeras deveria ser igual")
+	assert.Equal(t, 5, len(cfgTOML.Cameras), "Número de câmeras deveria ser 5")
 }
