@@ -393,10 +393,65 @@ compression:
 Este é um projeto da **T3 Labs**. Para contribuir:
 
 1. Fork o repositório
-2. Crie uma branch para sua feature
-3. Commit suas mudanças
-4. Push para a branch
-5. Abra um Pull Request
+2. Crie uma branch para sua feature (`git checkout -b feature/nova-funcionalidade`)
+3. **Crie um changelog fragment** para suas mudanças:
+   ```bash
+   ./scripts/new-changelog.sh feature "Descrição da mudança"
+   ```
+4. Commit suas mudanças usando [commits semânticos](https://www.conventionalcommits.org/):
+   ```bash
+   git commit -m "feat: adiciona nova funcionalidade"
+   ```
+5. Push para a branch (`git push origin feature/nova-funcionalidade`)
+6. Abra um Pull Request
+
+### 📝 Sistema de Changelog
+
+Este projeto usa [Towncrier](https://towncrier.readthedocs.io/) para gerenciar o changelog automaticamente.
+
+**Criar um fragment:**
+```bash
+# Usando o script helper (recomendado)
+./scripts/new-changelog.sh feature "Adiciona suporte a PostgreSQL"
+
+# Ou manualmente
+echo "Adiciona suporte a PostgreSQL" > changelog.d/$(date +%s).feature.md
+```
+
+**Tipos disponíveis:** `feature`, `bugfix`, `docs`, `removal`, `security`, `performance`, `refactor`, `misc`
+
+**Gerar changelog para release:**
+```bash
+# Preview
+./scripts/build-changelog.sh --draft 1.0.0
+
+# Gerar
+./scripts/build-changelog.sh 1.0.0
+```
+
+Para mais detalhes, veja [docs/PRECOMMIT_TOWNCRIER_GUIDE.md](docs/PRECOMMIT_TOWNCRIER_GUIDE.md)
+
+### 🔍 Pre-commit Hooks
+
+Este projeto usa pre-commit hooks para garantir qualidade:
+
+```bash
+# Instalar hooks
+pip install pre-commit towncrier
+pre-commit install
+pre-commit install --hook-type commit-msg
+
+# Executar manualmente
+pre-commit run --all-files
+```
+
+Os hooks verificam:
+- ✅ Formatação de código Go (gofmt, goimports)
+- ✅ Lint (go vet, golangci-lint)
+- ✅ Changelog fragments (towncrier)
+- ✅ Formato de commits (commitizen)
+- ✅ Detecção de segredos
+- ✅ Validação de YAML/TOML/JSON
 
 ## 📝 Licença
 

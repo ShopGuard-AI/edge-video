@@ -1,0 +1,74 @@
+[tool.towncrier]
+# Configuração do Towncrier para geração automática de CHANGELOG
+# Documentação: https://towncrier.readthedocs.io/
+
+# Caminho para o arquivo de changelog
+filename = "CHANGELOG.md"
+
+# Diretório onde os fragments de changelog serão armazenados
+directory = "changelog.d"
+
+# Template para o título das versões
+title_format = "## [{version}] - {project_date}"
+
+# Template para o corpo do changelog
+template = "changelog.d/template.md.j2"
+
+# Formato de data (ISO 8601)
+issue_format = "[#{issue}](https://github.com/T3-Labs/edge-video/issues/{issue})"
+
+# Branch principal para comparação
+# compare_with = "origin/main"
+
+# Iniciar versão do zero se não existir CHANGELOG
+start_string = "<!-- towncrier release notes start -->\n"
+
+# Underlines para títulos (markdown usa ##)
+underlines = ["", "", ""]
+
+# Wrap do texto (0 = sem wrap)
+wrap = false
+
+# All bullets points (não adicionar bullets extras)
+all_bullets = true
+
+# Tipos de mudanças permitidos
+[[tool.towncrier.type]]
+directory = "feature"
+name = "✨ Features"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "bugfix"
+name = "🐛 Bug Fixes"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "docs"
+name = "📚 Documentation"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "removal"
+name = "🗑️ Removals and Deprecations"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "misc"
+name = "🔧 Miscellaneous"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "security"
+name = "🔒 Security"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "performance"
+name = "⚡ Performance"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "refactor"
+name = "♻️ Refactoring"
+showcontent = true

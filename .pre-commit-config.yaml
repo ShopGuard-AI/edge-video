@@ -1,0 +1,88 @@
+# Configuração do Pre-commit
+# Documentação: https://pre-commit.com/
+
+repos:
+  # Hooks gerais de qualidade
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        name: Remove espaços em branco no final das linhas
+      - id: end-of-file-fixer
+        name: Garante nova linha no final dos arquivos
+      - id: check-yaml
+        name: Valida sintaxe YAML
+        args: ['--unsafe']  # Permite templates no YAML
+      - id: check-toml
+        name: Valida sintaxe TOML
+      - id: check-json
+        name: Valida sintaxe JSON
+      - id: check-added-large-files
+        name: Previne commit de arquivos grandes
+        args: ['--maxkb=1024']
+      - id: check-merge-conflict
+        name: Detecta marcadores de merge conflict
+      - id: check-case-conflict
+        name: Verifica conflitos de case em nomes de arquivos
+
+  # Go: formatação e lint
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+        name: Formata código Go
+      - id: go-vet
+        name: Executa go vet
+      - id: go-imports
+        name: Organiza imports Go
+      - id: go-build
+        name: Verifica build Go
+      - id: go-mod-tidy
+        name: Executa go mod tidy
+
+  # Python: formatação com Ruff (se houver scripts Python)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.6
+    hooks:
+      - id: ruff
+        name: Lint Python com Ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+        name: Formata código Python com Ruff
+
+  # Towncrier: Valida changelog fragments
+  - repo: https://github.com/twisted/towncrier
+    rev: 23.11.0
+    hooks:
+      - id: towncrier-check
+        name: Verifica changelog fragments
+        # Permite commits sem fragments em branches específicas
+        exclude: '^(main|master|develop)$'
+        args: ['--compare-with=origin/main']
+        additional_dependencies: []
+
+  # Commitizen: mensagens de commit semânticas
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.13.0
+    hooks:
+      - id: commitizen
+        name: Valida formato de commits
+        stages: [commit-msg]
+
+  # Detecção de segredos
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        name: Detecta segredos no código
+        args: ['--baseline', '.secrets.baseline']
+        exclude: |
+          (?x)^(
+              .*\.lock$|
+              go\.sum$|
+              \.git/.*
+          )$
+
+# Configuração global
+default_stages: [commit]
+fail_fast: false
