@@ -50,13 +50,13 @@ func (p *Publisher) Enabled() bool {
 
 // Metadata represents the structure of the metadata message.
 type Metadata struct {
-	CameraID   string    `json:"camera_id"`
-	Timestamp  time.Time `json:"timestamp"`
-	RedisKey   string    `json:"redis_key"`
-	Width      int       `json:"width"`
-	Height     int       `json:"height"`
-	Encoding   string    `json:"encoding"`
-	SizeBytes  int       `json:"size_bytes"`
+	CameraID  string    `json:"camera_id"`
+	Timestamp time.Time `json:"timestamp"`
+	RedisKey  string    `json:"redis_key"`
+	Width     int       `json:"width"`
+	Height    int       `json:"height"`
+	Encoding  string    `json:"encoding"`
+	SizeBytes int       `json:"size_bytes"`
 }
 
 // PublishMetadata sends a JSON message with frame metadata to RabbitMQ.
@@ -66,13 +66,13 @@ func (p *Publisher) PublishMetadata(cameraID string, timestamp time.Time, redisK
 	}
 
 	metadata := Metadata{
-		CameraID:   cameraID,
-		Timestamp:  timestamp,
-		RedisKey:   redisKey,
-		Width:      width,
-		Height:     height,
-		Encoding:   encoding,
-		SizeBytes:  size,
+		CameraID:  cameraID,
+		Timestamp: timestamp,
+		RedisKey:  redisKey,
+		Width:     width,
+		Height:    height,
+		Encoding:  encoding,
+		SizeBytes: size,
 	}
 
 	body, err := json.Marshal(metadata)

@@ -8,12 +8,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/T3-Labs/edge-video/internal/metadata"
+	"github.com/T3-Labs/edge-video/internal/storage"
 	"github.com/T3-Labs/edge-video/pkg/camera"
 	"github.com/T3-Labs/edge-video/pkg/config"
 	"github.com/T3-Labs/edge-video/pkg/mq"
 	"github.com/T3-Labs/edge-video/pkg/util"
-	"github.com/T3-Labs/edge-video/internal/metadata"
-	"github.com/T3-Labs/edge-video/internal/storage"
 )
 
 func main() {

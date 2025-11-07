@@ -57,7 +57,7 @@ type Config struct {
 	Redis               RedisConfig    `mapstructure:"redis"`
 	Metadata            MetadataConfig `mapstructure:"metadata"`
 	Compression         Compression    `mapstructure:"compression"`
-	Optimization        Optimization `mapstructure:"optimization"`
+	Optimization        Optimization   `mapstructure:"optimization"`
 	Cameras             []CameraConfig `mapstructure:"cameras"`
 }
 
