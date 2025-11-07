@@ -1,7 +1,5 @@
 # Edge Video Documentation
 
-![Edge Video](assets/banner.png)
-
 <div align="center">
 
 [![Go Tests](https://github.com/T3-Labs/edge-video/actions/workflows/go-test.yml/badge.svg)](https://github.com/T3-Labs/edge-video/actions/workflows/go-test.yml)

@@ -199,9 +199,9 @@ towncrier build --version 1.0.0 --yes     # Sem confirmação
 
 ## 📚 Documentação Completa
 
-- **[docs/PRECOMMIT_TOWNCRIER_GUIDE.md](docs/PRECOMMIT_TOWNCRIER_GUIDE.md)** - Guia completo
-- **[changelog.d/README.md](changelog.d/README.md)** - Guia de fragments
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Guia de desenvolvimento
+- **[Pre-commit & Towncrier Guide](PRECOMMIT_TOWNCRIER_GUIDE.md)** - Guia completo de uso
+- **[Development Guide](development/precommit-towncrier.md)** - Guia de desenvolvimento
+- **[Contributing Guide](CONTRIBUTING.md)** - Como contribuir
 
 ---
 
