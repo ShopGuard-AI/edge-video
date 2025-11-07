@@ -1,0 +1,96 @@
+name: Build and Deploy MkDocs
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Define permissões para GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Permite apenas um deploy por vez
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build MkDocs Documentation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Necessário para git-revision-date-localized
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Instalar dependências do MkDocs
+        run: |
+          pip install --upgrade pip
+          pip install mkdocs-material
+          pip install mkdocs-git-revision-date-localized-plugin
+          pip install mkdocs-minify-plugin
+          pip install mkdocs-redirects
+          pip install mkdocstrings[python]
+          pip install pymdown-extensions
+          pip install mkdocs-awesome-pages-plugin
+
+      - name: Verificar arquivos de documentação
+        run: |
+          echo "📚 Estrutura de documentação:"
+          ls -la docs/ || echo "⚠️ Diretório docs/ não encontrado"
+          echo ""
+          echo "📄 Arquivo mkdocs.yml:"
+          cat mkdocs.yml || echo "⚠️ Arquivo mkdocs.yml não encontrado"
+
+      - name: Build da documentação
+        run: |
+          mkdocs build --strict --verbose
+          echo "✅ Documentação construída com sucesso!"
+
+      - name: Verificar site gerado
+        run: |
+          echo "📦 Arquivos gerados em site/:"
+          ls -la site/
+          echo ""
+          echo "📊 Tamanho total:"
+          du -sh site/
+
+      - name: Upload artifact para GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+  deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Deploy bem-sucedido
+        run: |
+          echo "✅ Documentação publicada com sucesso!"
+          echo "🌐 URL: ${{ steps.deployment.outputs.page_url }}"

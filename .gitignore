@@ -28,6 +28,12 @@ coverage.txt
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
+# Python virtual environments
+.venv/
+.venv-tools/
+venv-test/
+__pycache__/
+
 # Go workspace file
 go.work
 go.work.sum
