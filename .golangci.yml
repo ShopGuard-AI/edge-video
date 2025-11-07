@@ -1,0 +1,52 @@
+# Configuração do golangci-lint
+# Documentação completa: https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck      # Verifica erros não tratados
+    - gosimple      # Simplificações de código
+    - govet         # Análise do go vet
+    - ineffassign   # Deteta atribuições ineficazes
+    - staticcheck   # Análise estática avançada
+    - unused        # Código não utilizado
+    - gofmt         # Verifica formatação
+    - goimports     # Verifica imports
+    - misspell      # Verifica erros de ortografia
+    - revive        # Linter rápido e configurável
+    - gosec         # Verifica problemas de segurança
+    - bodyclose     # Verifica se response bodies são fechados
+    - noctx         # Verifica uso de context
+    - errorlint     # Análise de erros wrapeados
+
+linters-settings:
+  errcheck:
+    check-blank: true
+    check-type-assertions: true
+  
+  govet:
+    check-shadowing: true
+    enable-all: true
+  
+  revive:
+    confidence: 0.8
+  
+  gosec:
+    severity: medium
+    confidence: medium
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  
+  # Excluir alguns problemas comuns em testes
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec

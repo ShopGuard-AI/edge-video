@@ -1,9 +1,6 @@
 name: Docker CI/CD para GitHub Container Registry
 
 on:
-  push:
-    branches:
-      - main
   release:
     types: [published, created]
   workflow_dispatch:
@@ -41,25 +38,14 @@ jobs:
         env:
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
 
-      # 4. Definir tags manualmente
+      # 4. Definir tags da imagem (versão + latest)
       - name: Definir tags da imagem
         id: tags
         run: |
           IMAGE_BASE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}"
-          
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            # Para releases: versão + latest
-            VERSION="${{ github.event.release.tag_name }}"
-            VERSION=${VERSION#v}  # Remove 'v' se existir
-            echo "TAGS=${IMAGE_BASE}:${VERSION},${IMAGE_BASE}:latest" >> $GITHUB_ENV
-          else
-            # Para push normal: branch + latest (se for main)
-            if [[ "${{ github.ref_name }}" == "main" ]]; then
-              echo "TAGS=${IMAGE_BASE}:main,${IMAGE_BASE}:latest" >> $GITHUB_ENV
-            else
-              echo "TAGS=${IMAGE_BASE}:${{ github.ref_name }}" >> $GITHUB_ENV
-            fi
-          fi
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION=${VERSION#v}  # Remove 'v' se existir (ex: v1.0.0 -> 1.0.0)
+          echo "TAGS=${IMAGE_BASE}:${VERSION},${IMAGE_BASE}:latest" >> $GITHUB_ENV
 
       # 5. Construir e enviar imagem Docker
       - name: Construir e enviar imagem Docker
