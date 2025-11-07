@@ -1,0 +1,228 @@
+# Configuração do MkDocs para Edge Video
+site_name: Edge Video Documentation
+site_description: Sistema de Captura e Distribuição de Vídeo para Edge Computing
+site_author: T3 Labs
+site_url: https://t3-labs.github.io/edge-video
+
+# Repositório
+repo_name: T3-Labs/edge-video
+repo_url: https://github.com/T3-Labs/edge-video
+edit_uri: edit/main/docs/
+
+# Copyright
+copyright: Copyright &copy; 2025 T3 Labs
+
+# Tema
+theme:
+  name: material
+  language: pt-BR
+  logo: assets/logo.png
+  favicon: assets/favicon.png
+  
+  # Paleta de cores
+  palette:
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Mudar para modo escuro
+    
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Mudar para modo claro
+  
+  # Funcionalidades
+  features:
+    - navigation.instant        # Navegação instantânea
+    - navigation.instant.progress  # Barra de progresso
+    - navigation.tracking       # Tracking de âncoras na URL
+    - navigation.tabs           # Tabs de navegação
+    - navigation.tabs.sticky    # Tabs fixas
+    - navigation.sections       # Seções expandidas
+    - navigation.expand         # Expandir navegação
+    - navigation.path           # Breadcrumbs
+    - navigation.indexes        # Índices de seção
+    - navigation.top            # Botão "voltar ao topo"
+    - navigation.footer         # Navegação no rodapé
+    - toc.follow                # TOC segue scroll
+    - toc.integrate             # TOC integrado
+    - search.suggest            # Sugestões de busca
+    - search.highlight          # Destacar termos de busca
+    - search.share              # Compartilhar busca
+    - header.autohide           # Auto-hide header
+    - content.code.copy         # Botão copiar código
+    - content.code.annotate     # Anotações em código
+    - content.tabs.link         # Link tabs
+    - content.tooltips          # Tooltips
+    - announce.dismiss          # Dismiss announcements
+
+  # Ícones
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+    admonition:
+      note: octicons/tag-16
+      abstract: octicons/checklist-16
+      info: octicons/info-16
+      tip: octicons/squirrel-16
+      success: octicons/check-16
+      question: octicons/question-16
+      warning: octicons/alert-16
+      failure: octicons/x-circle-16
+      danger: octicons/zap-16
+      bug: octicons/bug-16
+      example: octicons/beaker-16
+      quote: octicons/quote-16
+
+# Plugins
+plugins:
+  - search:
+      lang: pt
+      separator: '[\s\-\_]+'
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: timeago
+      fallback_to_build_date: true
+  - minify:
+      minify_html: true
+      minify_js: true
+      minify_css: true
+      htmlmin_opts:
+        remove_comments: true
+  - awesome-pages
+
+# Markdown Extensions
+markdown_extensions:
+  # Python Markdown
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      permalink_title: Link permanente
+      toc_depth: 3
+  
+  # Python Markdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      auto_append:
+        - includes/abbreviations.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# Navegação
+nav:
+  - Home: index.md
+  - Guia de Início:
+      - Instalação: getting-started/installation.md
+      - Configuração: getting-started/configuration.md
+      - Primeiro Uso: getting-started/quickstart.md
+  - Arquitetura:
+      - Visão Geral: architecture/overview.md
+      - Componentes: architecture/components.md
+      - Fluxo de Dados: architecture/data-flow.md
+  - Funcionalidades:
+      - Captura de Câmeras: features/camera-capture.md
+      - Redis Storage: features/redis-storage.md
+      - Metadata Publisher: features/metadata.md
+      - Message Queue: features/message-queue.md
+  - Guias:
+      - Docker Deployment: guides/docker.md
+      - Configuração Avançada: guides/advanced-config.md
+      - Monitoramento: guides/monitoring.md
+      - Troubleshooting: guides/troubleshooting.md
+  - Desenvolvimento:
+      - Contribuindo: development/contributing.md
+      - Pre-commit & Changelog: development/precommit-towncrier.md
+      - Testes: development/testing.md
+      - CI/CD: development/cicd.md
+  - API Reference:
+      - Configuração: api/config.md
+      - Câmeras: api/camera.md
+      - Storage: api/storage.md
+      - Message Queue: api/mq.md
+  - Changelog: changelog.md
+  - Sobre:
+      - Licença: about/license.md
+      - Créditos: about/credits.md
+
+# Extra
+extra:
+  version:
+    provider: mike
+  
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/T3-Labs
+      name: T3 Labs no GitHub
+    - icon: fontawesome/brands/docker
+      link: https://github.com/orgs/T3-Labs/packages
+      name: Docker Images
+  
+  analytics:
+    feedback:
+      title: Esta página foi útil?
+      ratings:
+        - icon: material/emoticon-happy-outline
+          name: Sim, muito útil!
+          data: 1
+          note: >-
+            Obrigado pelo feedback! Ajude-nos a melhorar editando esta página.
+        - icon: material/emoticon-sad-outline
+          name: Não, precisa melhorar
+          data: 0
+          note: >-
+            Obrigado pelo feedback! Abra uma issue para nos contar o que podemos melhorar.
+  
+  consent:
+    title: Consentimento de cookies
+    description: >-
+      Usamos cookies para reconhecer suas visitas e preferências, bem como medir
+      a eficácia da documentação. Com seu consentimento, você nos ajuda a melhorar.
+
+# CSS e JS customizado
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/extra.js
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
