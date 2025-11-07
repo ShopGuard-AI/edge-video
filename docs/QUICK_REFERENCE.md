@@ -71,6 +71,6 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ## Documentação Completa
 
-- 📖 [docs/PRECOMMIT_TOWNCRIER_GUIDE.md](PRECOMMIT_TOWNCRIER_GUIDE.md)
-- 📖 [docs/TOWNCRIER_SETUP.md](TOWNCRIER_SETUP.md)
-- 📖 [changelog.d/README.md](../changelog.d/README.md)
+- 📖 [Pre-commit & Towncrier Guide](PRECOMMIT_TOWNCRIER_GUIDE.md)
+- 📖 [Towncrier Setup Guide](TOWNCRIER_SETUP.md)
+- 📖 [Development Guide](development/precommit-towncrier.md)

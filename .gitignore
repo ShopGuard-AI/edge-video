@@ -31,8 +31,13 @@ coverage.txt
 # Python virtual environments
 .venv/
 .venv-tools/
+.venv-docs/
 venv-test/
 __pycache__/
+
+# MkDocs
+site/
+.cache/
 
 # Go workspace file
 go.work
