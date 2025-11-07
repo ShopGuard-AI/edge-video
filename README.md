@@ -1,5 +1,10 @@
 # Edge Video - Sistema de Captura e Distribuição de Vídeo
 
+[![Go Tests](https://github.com/T3-Labs/edge-video/actions/workflows/go-test.yml/badge.svg)](https://github.com/T3-Labs/edge-video/actions/workflows/go-test.yml)
+[![Docker Build](https://github.com/T3-Labs/edge-video/actions/workflows/build-and-push.yml/badge.svg)](https://github.com/T3-Labs/edge-video/actions/workflows/build-and-push.yml)
+[![Go Version](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go)](https://go.dev/)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 ## 📋 Objetivo do Projeto
 
 O **Edge Video** é um sistema distribuído de captura e streaming de câmeras RTSP, projetado para ambientes de edge computing. O sistema captura frames de múltiplas câmeras IP em tempo real, processa-os e distribui através de uma fila de mensagens (RabbitMQ), permitindo que múltiplos consumidores recebam e processem os streams de vídeo de forma escalável e eficiente.
@@ -10,7 +15,7 @@ O **Edge Video** é um sistema distribuído de captura e streaming de câmeras R
 - **Processamento em Edge**: Processamento local dos frames antes da transmissão
 - **Distribuição via Message Broker**: Utiliza RabbitMQ com protocolo AMQP para distribuição eficiente
 - **Visualização em Grid**: Interface Python para visualização de todas as câmeras em uma única janela
-- **Configuração Flexível**: Fácil adição/remoção de câmeras via arquivo YAML
+- **Configuração Flexível**: Fácil adição/remoção de câmeras via arquivo TOML
 - **Containerizado**: Deploy simplificado com Docker e Docker Compose
 
 ## 🏗️ Arquitetura
@@ -116,7 +121,7 @@ uv run ruff format src/
 
 ```
 edge_guard_ai/
-├── config.yaml              # Configuração das câmeras e parâmetros
+├── config.toml              # Configuração das câmeras e parâmetros
 ├── docker-compose.yml       # Orquestração dos serviços
 ├── Dockerfile              # Build da aplicação Go
 ├── main.go                 # Entrypoint da aplicação
@@ -145,33 +150,36 @@ edge_guard_ai/
 
 ### 1. Configure as Câmeras
 
-Edite o arquivo `config.yaml` e adicione as URLs das suas câmeras:
+Edite o arquivo `config.toml` e adicione as URLs das suas câmeras:
 
-```yaml
-cameras:
-  - id: "cam1"
-    url: "rtsp://user:pass@192.168.1.100:554/stream"
-  - id: "cam2"
-    url: "rtsp://user:pass@192.168.1.101:554/stream"
-  # ... até 6 câmeras
+```toml
+[[cameras]]
+id = "cam1"
+url = "rtsp://user:pass@192.168.1.100:554/stream"
+
+[[cameras]]
+id = "cam2"
+url = "rtsp://user:pass@192.168.1.101:554/stream"
+
+# ... até 6 câmeras
 ```
 
-**Usando um caminho customizado para o config.yaml:**
+**Usando um caminho customizado para o config.toml:**
 
 Você pode especificar um caminho diferente usando variável de ambiente:
 
 ```bash
 # Opção 1: Definir no terminal
-export CONFIG_PATH=/etc/edge-video/config.yaml
+export CONFIG_PATH=/etc/edge-video/config.toml
 docker-compose up -d
 
 # Opção 2: Criar um arquivo .env
 cp .env.example .env
-# Edite o .env e defina: CONFIG_PATH=/seu/caminho/config.yaml
+# Edite o .env e defina: CONFIG_PATH=/seu/caminho/config.toml
 docker-compose up -d
 
 # Opção 3: Inline
-CONFIG_PATH=/path/to/config.yaml docker-compose up -d
+CONFIG_PATH=/path/to/config.toml docker-compose up -d
 ```
 
 ### 2. Inicie os Serviços
@@ -204,43 +212,43 @@ docker run -d \
 # 2. Baixe a imagem do Edge Video (se ainda não tiver)
 docker pull t3labs/edge-video:latest
 
-# 3. Execute o Camera Collector com seu config.yaml local
+# 3. Execute o Camera Collector com seu config.toml local
 docker run -d \
   --name camera-collector \
   --link rabbitmq:rabbitmq \
-  -v /path/absoluto/para/seu/config.yaml:/app/config.yaml \
+  -v /path/absoluto/para/seu/config.toml:/app/config.toml \
   t3labs/edge-video:latest
 ```
 
 **Exemplos de caminhos para o volume:**
 
 ```bash
-# Exemplo 1: Config.yaml na pasta atual
+# Exemplo 1: Config.toml na pasta atual
 docker run -d \
   --name camera-collector \
   --link rabbitmq:rabbitmq \
-  -v $(pwd)/config.yaml:/app/config.yaml \
+  -v $(pwd)/config.toml:/app/config.toml \
   t3labs/edge-video:latest
 
-# Exemplo 2: Config.yaml em /etc
+# Exemplo 2: Config.toml em /etc
 docker run -d \
   --name camera-collector \
   --link rabbitmq:rabbitmq \
-  -v /etc/edge-video/config.yaml:/app/config.yaml \
+  -v /etc/edge-video/config.toml:/app/config.toml \
   t3labs/edge-video:latest
 
-# Exemplo 3: Config.yaml no home do usuário
+# Exemplo 3: Config.toml no home do usuário
 docker run -d \
   --name camera-collector \
   --link rabbitmq:rabbitmq \
-  -v $HOME/.config/edge-video/config.yaml:/app/config.yaml \
+  -v $HOME/.config/edge-video/config.toml:/app/config.toml \
   t3labs/edge-video:latest
 
-# Exemplo 4: Config.yaml em storage montado
+# Exemplo 4: Config.toml em storage montado
 docker run -d \
   --name camera-collector \
   --link rabbitmq:rabbitmq \
-  -v /mnt/storage/configs/cameras.yaml:/app/config.yaml \
+  -v /mnt/storage/configs/cameras.toml:/app/config.toml \
   t3labs/edge-video:latest
 ```
 
