@@ -29,10 +29,13 @@ type Compression struct {
 }
 
 type Optimization struct {
-	MaxWorkers      int    `mapstructure:"max_workers"`
-	BufferSize      int    `mapstructure:"buffer_size"`
-	FrameQuality    int    `mapstructure:"frame_quality"`
-	FrameResolution string `mapstructure:"frame_resolution"`
+	MaxWorkers         int    `mapstructure:"max_workers"`
+	BufferSize         int    `mapstructure:"buffer_size"`
+	FrameQuality       int    `mapstructure:"frame_quality"`
+	FrameResolution    string `mapstructure:"frame_resolution"`
+	UsePersistent      bool   `mapstructure:"use_persistent"`
+	CircuitMaxFailures int    `mapstructure:"circuit_max_failures"`
+	CircuitResetSec    int    `mapstructure:"circuit_reset_seconds"`
 }
 
 type RedisConfig struct {
