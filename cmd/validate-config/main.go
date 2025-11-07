@@ -1,18 +1,23 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"github.com/T3-Labs/edge-video/pkg/config"
 )
 
 func main() {
-	cfg, err := config.LoadConfig("config.toml")
+	configFile := flag.String("config", "config.toml", "Caminho para o arquivo de configuração")
+	flag.Parse()
+
+	cfg, err := config.LoadConfig(*configFile)
 	if err != nil {
 		fmt.Printf("❌ Erro ao carregar config: %v\n", err)
 		return
 	}
 
 	fmt.Println("✅ Configuração carregada com sucesso!")
+	fmt.Printf("\n📁 Arquivo: %s\n", *configFile)
 	fmt.Println("\n=== Parâmetros Principais ===")
 	fmt.Printf("Target FPS: %v\n", cfg.TargetFPS)
 	fmt.Printf("Protocol: %s\n", cfg.Protocol)

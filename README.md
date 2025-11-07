@@ -164,25 +164,43 @@ url = "rtsp://user:pass@192.168.1.101:554/stream"
 # ... até 6 câmeras
 ```
 
-**Usando um caminho customizado para o config.toml:**
+### 2. Executar a Aplicação
 
-Você pode especificar um caminho diferente usando variável de ambiente:
+#### Usando arquivo de configuração padrão
 
 ```bash
-# Opção 1: Definir no terminal
-export CONFIG_PATH=/etc/edge-video/config.toml
-docker-compose up -d
+# Compilar e executar
+go build -o edge-video ./cmd/edge-video
+./edge-video
 
-# Opção 2: Criar um arquivo .env
-cp .env.example .env
-# Edite o .env e defina: CONFIG_PATH=/seu/caminho/config.toml
-docker-compose up -d
-
-# Opção 3: Inline
-CONFIG_PATH=/path/to/config.toml docker-compose up -d
+# Ou executar diretamente
+go run ./cmd/edge-video
 ```
 
-### 2. Inicie os Serviços
+#### Usando arquivo de configuração customizado
+
+```bash
+# Especificar arquivo via parâmetro --config
+./edge-video --config /path/to/custom-config.toml
+
+# Ou com go run
+go run ./cmd/edge-video --config config.test.toml
+```
+
+#### Validar configuração
+
+```bash
+# Validar arquivo de configuração
+go run ./cmd/validate-config --config config.toml
+
+# Ver ajuda
+./edge-video --help
+# Output:
+#   -config string
+#         Caminho para o arquivo de configuração (default "config.toml")
+```
+
+### 3. Inicie os Serviços com Docker
 
 #### Opção A: Usando Docker Compose (Recomendado)
 

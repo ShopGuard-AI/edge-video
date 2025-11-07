@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -24,19 +25,24 @@ import (
 )
 
 func main() {
+	// Parse command line flags
+	configFile := flag.String("config", "config.toml", "Caminho para o arquivo de configuração")
+	flag.Parse()
+
 	err := logger.InitLogger(false)
 	if err != nil {
 		log.Fatalf("erro ao inicializar logger: %v", err)
 	}
 	defer logger.Sync()
 	
-	cfg, err := config.LoadConfig("config.toml")
+	cfg, err := config.LoadConfig(*configFile)
 	if err != nil {
-		logger.Log.Fatalw("Erro ao carregar config", "error", err)
+		logger.Log.Fatalw("Erro ao carregar config", "error", err, "config_file", *configFile)
 	}
 
 	interval := cfg.GetFrameInterval()
 	logger.Log.Infow("Configuração carregada",
+		"config_file", *configFile,
 		"target_fps", cfg.TargetFPS,
 		"interval", interval,
 		"cameras", len(cfg.Cameras),
