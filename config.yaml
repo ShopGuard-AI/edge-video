@@ -11,8 +11,8 @@ mqtt:
   topic_prefix: "camera/"
 
 optimization:
-  max_workers: 10                  # Número de workers para processar frames
-  buffer_size: 100                 # Tamanho do buffer de frames
+  max_workers: 20                  # Número de workers para processar frames
+  buffer_size: 200                 # Tamanho do buffer de frames
   frame_quality: 5                 # Qualidade JPEG (2-31, menor = melhor)
   frame_resolution: "1280x720"     # Resolução dos frames
   use_persistent: true             # Usar captura persistente FFmpeg

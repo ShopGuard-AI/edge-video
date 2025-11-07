@@ -17,6 +17,7 @@ type PersistentCapture struct {
 	cameraID     string
 	rtspURL      string
 	quality      int
+	fps          int
 	
 	mu           sync.RWMutex
 	cmd          *exec.Cmd
@@ -32,16 +33,17 @@ type PersistentCapture struct {
 	lastRestart  time.Time
 }
 
-func NewPersistentCapture(ctx context.Context, cameraID, rtspURL string, quality int) *PersistentCapture {
+func NewPersistentCapture(ctx context.Context, cameraID, rtspURL string, quality int, fps int) *PersistentCapture {
 	ctx, cancel := context.WithCancel(ctx)
 	
 	return &PersistentCapture{
 		cameraID:    cameraID,
 		rtspURL:     rtspURL,
 		quality:     quality,
+		fps:         fps,
 		ctx:         ctx,
 		cancel:      cancel,
-		frameBuffer: make(chan []byte, 10),
+		frameBuffer: make(chan []byte, 50),
 		lastRestart: time.Now(),
 	}
 }
@@ -79,7 +81,7 @@ func (pc *PersistentCapture) startFFmpeg() error {
 		"-f", "image2pipe",
 		"-vcodec", "mjpeg",
 		"-q:v", fmt.Sprintf("%d", pc.quality),
-		"-r", "10",
+		"-r", fmt.Sprintf("%d", pc.fps),
 		"-",
 	)
 	
@@ -250,6 +252,18 @@ func (pc *PersistentCapture) GetFrameNonBlocking() ([]byte, bool) {
 	case frame := <-pc.frameBuffer:
 		return frame, true
 	default:
+		return nil, false
+	}
+}
+
+func (pc *PersistentCapture) GetFrameWithTimeout(timeout time.Duration) ([]byte, bool) {
+	ctx, cancel := context.WithTimeout(pc.ctx, timeout)
+	defer cancel()
+	
+	select {
+	case frame := <-pc.frameBuffer:
+		return frame, true
+	case <-ctx.Done():
 		return nil, false
 	}
 }

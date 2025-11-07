@@ -68,7 +68,11 @@ func NewCapture(
 	}
 	
 	if usePersistent {
-		capture.persistentCapture = NewPersistentCapture(ctx, config.ID, config.URL, 5)
+		fps := int(time.Second / interval)
+		if fps == 0 {
+			fps = 30
+		}
+		capture.persistentCapture = NewPersistentCapture(ctx, config.ID, config.URL, 5, fps)
 	}
 	
 	return capture
@@ -110,7 +114,7 @@ func (c *Capture) persistentCaptureLoop() {
 			return
 			
 		case <-ticker.C:
-			frame, ok := c.persistentCapture.GetFrameNonBlocking()
+			frame, ok := c.persistentCapture.GetFrameWithTimeout(c.interval / 2)
 			if !ok {
 				metrics.FramesDropped.WithLabelValues(c.config.ID, "no_frame_available").Inc()
 				continue
@@ -138,9 +142,6 @@ func (c *Capture) persistentCaptureLoop() {
 func (c *Capture) classicCaptureLoop() {
 	logger.Log.Infow("Iniciando loop de captura clássica",
 		"camera_id", c.config.ID)
-	
-	ticker := time.NewTicker(c.interval)
-	defer ticker.Stop()
 
 	for {
 		select {
@@ -150,8 +151,16 @@ func (c *Capture) classicCaptureLoop() {
 			metrics.CameraConnected.WithLabelValues(c.config.ID).Set(0)
 			return
 			
-		case <-ticker.C:
-			c.captureAndPublish()
+		default:
+		}
+		
+		start := time.Now()
+		c.captureAndPublish()
+		
+		elapsed := time.Since(start)
+		sleepTime := c.interval - elapsed
+		if sleepTime > 0 {
+			time.Sleep(sleepTime)
 		}
 	}
 }
