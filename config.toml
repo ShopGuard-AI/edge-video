@@ -17,11 +17,21 @@ routing_key_prefix = "camera."
 broker = "tcp://localhost:1883"
 topic_prefix = "camera/"
 
+# Configurações de otimização de performance
+[optimization]
+max_workers = 20                    # Número de workers para processar frames
+buffer_size = 200                   # Tamanho do buffer de frames
+frame_quality = 5                   # Qualidade JPEG (2-31, menor = melhor)
+frame_resolution = "1280x720"       # Resolução dos frames
+use_persistent = true               # Usar captura persistente FFmpeg
+circuit_max_failures = 5            # Falhas antes de abrir circuit breaker
+circuit_reset_seconds = 60          # Tempo para tentar reconectar (segundos)
+
 # Configuração Redis (armazenamento de frames)
 [redis]
 enabled = true
 address = "redis:6379"
-ttl_seconds = 60
+ttl_seconds = 300
 prefix = "frames"
 
 # Configuração de Metadados (publicação de metadados de frames)
