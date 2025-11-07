@@ -218,7 +218,7 @@ go test -bench=. -benchmem ./...
 
 ## 📚 Recursos Adicionais
 
-- [Documentação Completa](../index.md)
+- [Documentação Completa](index.md)
 - [Guia de Desenvolvimento](development/contributing.md)
 - [Pre-commit + Towncrier](development/precommit-towncrier.md)
 - [Testes](development/testing.md)
