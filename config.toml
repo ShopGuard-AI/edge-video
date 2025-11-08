@@ -9,6 +9,7 @@ protocol = "amqp"
 # Configuração AMQP (RabbitMQ)
 [amqp]
 amqp_url = "amqp://user:password@rabbitmq:5672/supermercado_vhost"
+vhost =  "supermercado_vhost"
 exchange = "supermercado_exchange"
 routing_key_prefix = "camera."
 
@@ -31,7 +32,7 @@ circuit_reset_seconds = 60          # Tempo para tentar reconectar (segundos)
 [redis]
 enabled = true
 address = "redis:6379"
-ttl_seconds = 300
+ttl_seconds = 60
 prefix = "frames"
 
 # Configuração de Metadados (publicação de metadados de frames)

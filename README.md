@@ -339,19 +339,19 @@ cameras:
 
 ### 🔄 Optional Redis Frame Storage + Metadata
 
-You can enable Redis frame caching and metadata publishing by updating `config.yaml`:
+You can enable Redis frame caching and metadata publishing by updating `config.toml`:
 
-```yaml
-redis:
-  enabled: true
-  address: "redis:6379"
-  ttl_seconds: 300
-  prefix: "frames"
+```toml
+[redis]
+enabled = true
+address = "redis:6379"
+ttl_seconds = 300
+prefix = "frames"
 
-metadata:
-  enabled: true
-  exchange: "camera.metadata"
-  routing_key: "camera.metadata.event"
+[metadata]
+enabled = true
+exchange = "camera.metadata"
+routing_key = "camera.metadata.event"
 ```
 
 When enabled:
@@ -359,6 +359,71 @@ When enabled:
 - Frames are stored in Redis with TTL
 - Metadata messages are sent asynchronously to RabbitMQ
 - Existing video streaming and publishing are unaffected
+
+### 🏢 Isolamento Multi-Cliente (Multi-tenancy)
+
+O Edge Video usa o **vhost do RabbitMQ** como identificador único de cliente, garantindo isolamento automático de dados no Redis.
+
+#### Formato de Chave Redis
+
+```
+{vhost}:{prefix}:{cameraID}:{unix_timestamp_nano}:{sequence}
+```
+
+**Exemplo:**
+```redis
+supermercado_vhost:frames:cam4:1731024000123456789:00001
+```
+
+**Componentes:**
+- `supermercado_vhost` - Identificador do cliente (extraído do AMQP vhost)
+- `frames` - Prefixo configurável
+- `cam4` - ID da câmera
+- `1731024000123456789` - Unix timestamp em nanosegundos
+- `00001` - Sequência anti-colisão
+
+#### Como Funciona
+
+1. **Vhost Extraído Automaticamente**: O vhost é extraído da URL AMQP configurada
+2. **Unix Nanoseconds**: Timestamps numéricos para sortabilidade e performance
+3. **Chaves Redis Isoladas**: Cada cliente possui namespace próprio no Redis
+4. **Zero Configuração Adicional**: Não é necessário configurar `instance_id` separadamente
+
+#### Exemplo: Múltiplos Clientes
+
+```toml
+# Cliente A (config-client-a.toml)
+[amqp]
+amqp_url = "amqp://user:pass@rabbitmq:5672/client-a"
+
+# Cliente B (config-client-b.toml) 
+[amqp]
+amqp_url = "amqp://user:pass@rabbitmq:5672/client-b"
+```
+
+**Resultado no Redis:**
+```redis
+client-a:frames:cam1:1731024000123456789:00001
+client-b:frames:cam1:1731024000123456789:00001
+```
+
+#### Por que Unix Timestamp?
+
+| Aspecto | RFC3339 | Unix Nano | Vantagem |
+|---------|---------|-----------|----------|
+| **Tamanho** | 30 chars | 19 dígitos | ✅ 36% menor |
+| **Sortable** | String | Numérico | ✅ Natural |
+| **Comparação** | Parsing | Inteiro | ✅ 10x mais rápido |
+| **Range Query** | Complexo | Simples | ✅ `>= start AND <= end` |
+
+**Benefícios:**
+- ✅ Impossível colisão entre clientes diferentes
+- ✅ Mesmas câmeras em clientes diferentes não conflitam
+- ✅ Timestamps compactos e sortable numericamente
+- ✅ Range queries extremamente eficientes
+- ✅ Alinhamento com arquitetura AMQP (vhost = multi-tenancy)
+
+📚 **Documentação Completa**: Veja [docs/vhost-based-identification.md](docs/vhost-based-identification.md) para detalhes de implementação, exemplos de deployment e troubleshooting.
 
 ## 🔍 Monitoramento
 
