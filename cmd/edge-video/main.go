@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -24,24 +25,33 @@ import (
 )
 
 func main() {
+	// Parse command line flags
+	configFile := flag.String("config", "config.toml", "Caminho para o arquivo de configuração")
+	flag.Parse()
+
 	err := logger.InitLogger(false)
 	if err != nil {
 		log.Fatalf("erro ao inicializar logger: %v", err)
 	}
 	defer logger.Sync()
 	
-	cfg, err := config.LoadConfig("config.toml")
+	cfg, err := config.LoadConfig(*configFile)
 	if err != nil {
-		logger.Log.Fatalw("Erro ao carregar config", "error", err)
+		logger.Log.Fatalw("Erro ao carregar config", "error", err, "config_file", *configFile)
 	}
+
+	// Extrai o vhost da URL AMQP para usar como identificador do cliente
+	vhost := cfg.ExtractVhostFromAMQP()
 
 	interval := cfg.GetFrameInterval()
 	logger.Log.Infow("Configuração carregada",
+		"config_file", *configFile,
 		"target_fps", cfg.TargetFPS,
 		"interval", interval,
 		"cameras", len(cfg.Cameras),
 		"max_workers", cfg.Optimization.MaxWorkers,
-		"buffer_size", cfg.Optimization.BufferSize)
+		"buffer_size", cfg.Optimization.BufferSize,
+		"vhost", vhost)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -67,7 +77,15 @@ func main() {
 	}
 	defer publisher.Close()
 
-	redisStore := storage.NewRedisStore(cfg.Redis.Address, cfg.Redis.TTLSeconds, cfg.Redis.Prefix, cfg.Redis.Enabled)
+	// Cria RedisStore usando o vhost como identificador do cliente
+	// Isso garante isolamento entre múltiplas instâncias usando diferentes vhosts
+	redisStore := storage.NewRedisStore(cfg.Redis.Address, cfg.Redis.TTLSeconds, cfg.Redis.Prefix, vhost, cfg.Redis.Enabled)
+	if redisStore.Enabled() {
+		logger.Log.Infow("Redis Store configurado",
+			"vhost", vhost,
+			"prefix", cfg.Redis.Prefix,
+			"ttl_seconds", cfg.Redis.TTLSeconds)
+	}
 
 	var metaPublisher *metadata.Publisher
 	if amqpPublisher != nil {

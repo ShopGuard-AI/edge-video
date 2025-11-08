@@ -1,6 +1,8 @@
 package config
 
 import (
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -83,4 +85,25 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// ExtractVhostFromAMQP extrai o vhost da URL AMQP.
+// Exemplo: amqp://user:pass@host:5672/myvhost -> "myvhost"
+// Retorna "/" se nenhum vhost for especificado
+func (c *Config) ExtractVhostFromAMQP() string {
+	if c.AMQP.AmqpURL == "" {
+		return "/"
+	}
+	
+	parsedURL, err := url.Parse(c.AMQP.AmqpURL)
+	if err != nil {
+		return "/"
+	}
+	
+	vhost := strings.TrimPrefix(parsedURL.Path, "/")
+	if vhost == "" {
+		return "/"
+	}
+	
+	return vhost
 }

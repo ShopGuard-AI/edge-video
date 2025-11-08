@@ -164,25 +164,43 @@ url = "rtsp://user:pass@192.168.1.101:554/stream"
 # ... até 6 câmeras
 ```
 
-**Usando um caminho customizado para o config.toml:**
+### 2. Executar a Aplicação
 
-Você pode especificar um caminho diferente usando variável de ambiente:
+#### Usando arquivo de configuração padrão
 
 ```bash
-# Opção 1: Definir no terminal
-export CONFIG_PATH=/etc/edge-video/config.toml
-docker-compose up -d
+# Compilar e executar
+go build -o edge-video ./cmd/edge-video
+./edge-video
 
-# Opção 2: Criar um arquivo .env
-cp .env.example .env
-# Edite o .env e defina: CONFIG_PATH=/seu/caminho/config.toml
-docker-compose up -d
-
-# Opção 3: Inline
-CONFIG_PATH=/path/to/config.toml docker-compose up -d
+# Ou executar diretamente
+go run ./cmd/edge-video
 ```
 
-### 2. Inicie os Serviços
+#### Usando arquivo de configuração customizado
+
+```bash
+# Especificar arquivo via parâmetro --config
+./edge-video --config /path/to/custom-config.toml
+
+# Ou com go run
+go run ./cmd/edge-video --config config.test.toml
+```
+
+#### Validar configuração
+
+```bash
+# Validar arquivo de configuração
+go run ./cmd/validate-config --config config.toml
+
+# Ver ajuda
+./edge-video --help
+# Output:
+#   -config string
+#         Caminho para o arquivo de configuração (default "config.toml")
+```
+
+### 3. Inicie os Serviços com Docker
 
 #### Opção A: Usando Docker Compose (Recomendado)
 
@@ -321,19 +339,19 @@ cameras:
 
 ### 🔄 Optional Redis Frame Storage + Metadata
 
-You can enable Redis frame caching and metadata publishing by updating `config.yaml`:
+You can enable Redis frame caching and metadata publishing by updating `config.toml`:
 
-```yaml
-redis:
-  enabled: true
-  address: "redis:6379"
-  ttl_seconds: 300
-  prefix: "frames"
+```toml
+[redis]
+enabled = true
+address = "redis:6379"
+ttl_seconds = 300
+prefix = "frames"
 
-metadata:
-  enabled: true
-  exchange: "camera.metadata"
-  routing_key: "camera.metadata.event"
+[metadata]
+enabled = true
+exchange = "camera.metadata"
+routing_key = "camera.metadata.event"
 ```
 
 When enabled:
@@ -341,6 +359,71 @@ When enabled:
 - Frames are stored in Redis with TTL
 - Metadata messages are sent asynchronously to RabbitMQ
 - Existing video streaming and publishing are unaffected
+
+### 🏢 Isolamento Multi-Cliente (Multi-tenancy)
+
+O Edge Video usa o **vhost do RabbitMQ** como identificador único de cliente, garantindo isolamento automático de dados no Redis.
+
+#### Formato de Chave Redis
+
+```
+{vhost}:{prefix}:{cameraID}:{unix_timestamp_nano}:{sequence}
+```
+
+**Exemplo:**
+```redis
+supermercado_vhost:frames:cam4:1731024000123456789:00001
+```
+
+**Componentes:**
+- `supermercado_vhost` - Identificador do cliente (extraído do AMQP vhost)
+- `frames` - Prefixo configurável
+- `cam4` - ID da câmera
+- `1731024000123456789` - Unix timestamp em nanosegundos
+- `00001` - Sequência anti-colisão
+
+#### Como Funciona
+
+1. **Vhost Extraído Automaticamente**: O vhost é extraído da URL AMQP configurada
+2. **Unix Nanoseconds**: Timestamps numéricos para sortabilidade e performance
+3. **Chaves Redis Isoladas**: Cada cliente possui namespace próprio no Redis
+4. **Zero Configuração Adicional**: Não é necessário configurar `instance_id` separadamente
+
+#### Exemplo: Múltiplos Clientes
+
+```toml
+# Cliente A (config-client-a.toml)
+[amqp]
+amqp_url = "amqp://user:pass@rabbitmq:5672/client-a"
+
+# Cliente B (config-client-b.toml) 
+[amqp]
+amqp_url = "amqp://user:pass@rabbitmq:5672/client-b"
+```
+
+**Resultado no Redis:**
+```redis
+client-a:frames:cam1:1731024000123456789:00001
+client-b:frames:cam1:1731024000123456789:00001
+```
+
+#### Por que Unix Timestamp?
+
+| Aspecto | RFC3339 | Unix Nano | Vantagem |
+|---------|---------|-----------|----------|
+| **Tamanho** | 30 chars | 19 dígitos | ✅ 36% menor |
+| **Sortable** | String | Numérico | ✅ Natural |
+| **Comparação** | Parsing | Inteiro | ✅ 10x mais rápido |
+| **Range Query** | Complexo | Simples | ✅ `>= start AND <= end` |
+
+**Benefícios:**
+- ✅ Impossível colisão entre clientes diferentes
+- ✅ Mesmas câmeras em clientes diferentes não conflitam
+- ✅ Timestamps compactos e sortable numericamente
+- ✅ Range queries extremamente eficientes
+- ✅ Alinhamento com arquitetura AMQP (vhost = multi-tenancy)
+
+📚 **Documentação Completa**: Veja [docs/vhost-based-identification.md](docs/vhost-based-identification.md) para detalhes de implementação, exemplos de deployment e troubleshooting.
 
 ## 🔍 Monitoramento
 

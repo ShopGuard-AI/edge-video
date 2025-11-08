@@ -1,0 +1,41 @@
+# Configuração de Teste - Edge Video
+
+target_fps = 15
+protocol = "mqtt"
+
+[mqtt]
+broker = "tcp://test-broker:1883"
+topic_prefix = "test/camera/"
+
+[amqp]
+amqp_url = "amqp://test:test@localhost:5672/"
+exchange = "test_exchange"
+routing_key_prefix = "test."
+
+[optimization]
+max_workers = 10
+buffer_size = 100
+frame_quality = 8
+frame_resolution = "640x480"
+use_persistent = false
+circuit_max_failures = 3
+circuit_reset_seconds = 30
+
+[redis]
+enabled = false
+address = "localhost:6379"
+ttl_seconds = 60
+prefix = "test_frames"
+
+[metadata]
+enabled = false
+exchange = "test.metadata"
+routing_key = "test.metadata.event"
+
+[[cameras]]
+id = "test_cam1"
+url = "rtsp://test:test@localhost:554/test1"
+
+[[cameras]]
+id = "test_cam2"
+url = "rtsp://test:test@localhost:554/test2"

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/streadway/amqp"
@@ -103,4 +105,21 @@ func (p *AMQPPublisher) Close() error {
 // GetChannel returns the underlying AMQP channel.
 func (p *AMQPPublisher) GetChannel() *amqp.Channel {
 	return p.channel
+}
+
+// ExtractVhostFromURL extracts the vhost from an AMQP URL.
+// Example: amqp://user:pass@localhost:5672/myvhost -> "myvhost"
+// If no vhost is specified, returns "/" (default vhost).
+func ExtractVhostFromURL(amqpURL string) (string, error) {
+	parsedURL, err := url.Parse(amqpURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse AMQP URL: %w", err)
+	}
+
+	vhost := strings.TrimPrefix(parsedURL.Path, "/")
+	if vhost == "" {
+		vhost = "/"
+	}
+
+	return vhost, nil
 }
