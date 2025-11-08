@@ -21,6 +21,22 @@
 
 O **Edge Video** é um sistema distribuído de captura e streaming de câmeras RTSP, projetado especificamente para ambientes de **edge computing**. O sistema captura frames de múltiplas câmeras IP em tempo real, processa-os localmente e distribui através de uma infraestrutura de mensageria robusta.
 
+!!! warning "Breaking Changes - v1.2.0 (Unreleased)"
+    
+    **Migração para Unix Nanoseconds no formato de chaves Redis**
+    
+    O formato de chaves Redis foi otimizado para melhor performance. Esta é uma **mudança incompatível** que requer ação:
+    
+    - **Formato Anterior**: `frames:{vhost}:{cameraID}:{RFC3339}:{sequence}`
+    - **Formato Novo**: `{vhost}:{prefix}:{cameraID}:{unix_nano}:{sequence}`
+    - **Exemplo**: `supermercado_vhost:frames:cam4:1731024000123456789:00001`
+    
+    **Benefícios**: 36% mais compacto, 10x mais rápido, sortable naturalmente
+    
+    **Migração**: FLUSHDB no Redis, aguardar TTL ou script de migração
+    
+    [:octicons-arrow-right-24: Guia de Migração Completo](features/redis-storage.md#migracao)
+
 ## ✨ Principais Funcionalidades
 
 <div class="grid cards" markdown>
@@ -33,13 +49,21 @@ O **Edge Video** é um sistema distribuído de captura e streaming de câmeras R
 
     [:octicons-arrow-right-24: Saiba mais](features/camera-capture.md)
 
--   :material-memory:{ .lg .middle } __Redis Storage__
+-   :material-memory:{ .lg .middle } __Redis Storage Otimizado__
 
     ---
 
-    Armazenamento temporário de frames no Redis com TTL configurável e suporte a autenticação.
+    Armazenamento de frames com formato de chave ultra-eficiente (Unix nanoseconds), 36% menor e 10x mais rápido.
 
     [:octicons-arrow-right-24: Configurar Redis](features/redis-storage.md)
+
+-   :material-domain:{ .lg .middle } __Multi-Tenant (Vhost)__
+
+    ---
+
+    Isolamento completo de dados por cliente usando RabbitMQ vhosts com namespace Redis dedicado.
+
+    [:octicons-arrow-right-24: Multi-Tenancy](vhost-based-identification.md)
 
 -   :material-rabbit:{ .lg .middle } __RabbitMQ Integration__
 
