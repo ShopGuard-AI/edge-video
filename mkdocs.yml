@@ -161,6 +161,7 @@ nav:
   - Funcionalidades:
       - Captura de Câmeras: features/camera-capture.md
       - Redis Storage: features/redis-storage.md
+      - Multi-Tenancy (Vhost): vhost-based-identification.md
       - Metadata Publisher: features/metadata.md
       - Message Queue: features/message-queue.md
   - Guias:
