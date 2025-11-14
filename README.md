@@ -449,6 +449,167 @@ O Edge Video usa o **vhost do RabbitMQ** como identificador único de cliente, g
 supermercado_vhost:frames:cam4:1731024000123456789:00001
 ```
 
+## 🖥️ Instalação no Windows
+
+O Edge Video suporta instalação nativa no Windows como serviço, permitindo execução em segundo plano sem necessidade de Docker.
+
+### Download e Instalação
+
+#### 1. Via GitHub Releases (Recomendado)
+```
+1. Acesse: https://github.com/T3-Labs/edge-video/releases
+2. Baixe: EdgeVideoSetup-X.X.X.exe
+3. Execute como Administrador
+4. Siga o assistente de instalação
+```
+
+#### 2. Via CI/CD Build
+```
+1. GitHub → Actions → "Windows Installer Build"  
+2. Download artifacts: edge-video-windows-X.X.X.zip
+3. Extrair e executar: EdgeVideoSetup-X.X.X.exe
+```
+
+### Instalação Manual (Desenvolvimento)
+
+```cmd
+# 1. Instalar o serviço
+edge-video-service.exe install
+
+# 2. Configurar câmeras
+notepad "C:\Program Files\T3Labs\EdgeVideo\config\config.toml"
+
+# 3. Iniciar serviço
+net start EdgeVideoService
+# OU
+edge-video-service.exe start
+```
+
+### Gerenciamento do Serviço
+
+#### Via Services.msc (Interface Gráfica)
+```
+1. Win + R → services.msc
+2. Encontrar: "Edge Video Camera Capture Service"  
+3. Clicar direito → Iniciar/Parar/Propriedades
+```
+
+#### Via Linha de Comando
+```cmd
+# Status
+sc query EdgeVideoService
+
+# Parar
+net stop EdgeVideoService
+
+# Iniciar  
+net start EdgeVideoService
+
+# Reiniciar
+net stop EdgeVideoService && net start EdgeVideoService
+
+# Desinstalar
+edge-video-service.exe uninstall
+```
+
+#### Via PowerShell
+```powershell
+# Controle
+Start-Service -Name "EdgeVideoService"
+Stop-Service -Name "EdgeVideoService"
+Restart-Service -Name "EdgeVideoService"
+
+# Status
+Get-Service -Name "EdgeVideoService"
+
+# Logs
+Get-WinEvent -LogName Application | Where-Object {$_.ProviderName -eq "EdgeVideoService"}
+```
+
+### Configuração Windows
+
+Editar: `C:\Program Files\T3Labs\EdgeVideo\config\config.toml`
+
+```toml
+# Exemplo configuração para Windows
+target_fps = 30
+protocol = "amqp"
+
+[amqp]
+amqp_url = "amqp://user:pass@rabbitmq-server:5672/vhost"
+exchange = "cameras"
+
+[redis]
+enabled = true
+address = "redis-server:6379"
+username = ""
+password = ""
+ttl_seconds = 300
+
+[[cameras]]
+id = "camera1"  
+url = "rtsp://admin:password@192.168.1.100:554/stream"
+
+[[cameras]]
+id = "camera2"
+url = "rtsp://admin:password@192.168.1.101:554/stream"
+```
+
+### Logs e Monitoramento
+
+#### Event Viewer
+```
+1. Win + R → eventvwr.msc
+2. Windows Logs → Application
+3. Filtrar por Source: "EdgeVideoService"
+```
+
+#### Logs Locais (Opcional)
+```
+C:\Program Files\T3Labs\EdgeVideo\logs\
+├── service.log       # Logs do serviço
+├── camera_cam1.log   # Logs por câmera  
+└── errors.log        # Erros críticos
+```
+
+### Firewall e Network
+
+```cmd
+# Permitir portas necessárias
+netsh advfirewall firewall add rule name="RTSP Cameras" dir=out action=allow protocol=TCP remoteport=554
+netsh advfirewall firewall add rule name="RabbitMQ AMQP" dir=out action=allow protocol=TCP remoteport=5672
+netsh advfirewall firewall add rule name="Redis Cache" dir=out action=allow protocol=TCP remoteport=6379
+```
+
+### Troubleshooting Windows
+
+#### Serviço não inicia
+```cmd
+# 1. Verificar configuração
+edge-video-service.exe console
+
+# 2. Testar conectividade
+telnet rabbitmq-server 5672
+telnet redis-server 6379
+
+# 3. Verificar logs
+Get-WinEvent -LogName Application -MaxEvents 10 | Where-Object {$_.ProviderName -eq "EdgeVideoService"}
+```
+
+#### Performance Windows
+```toml
+# config.toml otimizado para Windows
+[optimization]
+max_workers = 16              # Cores disponíveis
+buffer_size = 100             # Reduzir se pouca RAM
+frame_quality = 7             # Maior = menor CPU
+use_persistent = true         # Melhor para Windows
+```
+
+📚 **Documentação Completa**: [docs/windows/README.md](docs/windows/README.md)
+
+---
+
 **Componentes:**
 - `supermercado_vhost` - Identificador do cliente (extraído do AMQP vhost)
 - `frames` - Prefixo configurável

@@ -107,6 +107,9 @@ enabled = true
 # Formato: [host]:[port]
 address = "redis:6379"
 
+# Usuário Redis (opcional, deixe vazio se não tiver)
+username = ""
+
 # Senha Redis (opcional, deixe vazio se não tiver)
 password = ""
 
