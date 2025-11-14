@@ -24,6 +24,7 @@ type PersistentCapture struct {
 	stdout       io.ReadCloser
 	stderr       io.ReadCloser
 	running      bool
+	restarting   bool  // Flag para evitar restarts simultâneos
 	
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -31,6 +32,9 @@ type PersistentCapture struct {
 	frameBuffer  chan []byte
 	errorCount   int64
 	lastRestart  time.Time
+	
+	readCtx      context.Context     // Context para a goroutine readFrames
+	readCancel   context.CancelFunc  // Cancel para a goroutine readFrames
 }
 
 func NewPersistentCapture(ctx context.Context, cameraID, rtspURL string, quality int, fps int) *PersistentCapture {
@@ -60,6 +64,9 @@ func (pc *PersistentCapture) Start() error {
 	if err != nil {
 		return err
 	}
+	
+	// Cria context específico para readFrames
+	pc.readCtx, pc.readCancel = context.WithCancel(pc.ctx)
 	
 	go pc.readFrames()
 	go pc.monitorHealth()
@@ -115,13 +122,22 @@ func (pc *PersistentCapture) readFrames() {
 	
 	for {
 		select {
-		case <-pc.ctx.Done():
+		case <-pc.readCtx.Done():
+			// Context cancelado, sair silenciosamente
 			return
 		default:
 		}
 		
 		b, err := reader.ReadByte()
 		if err != nil {
+			// Verifica se o context foi cancelado antes de reportar erro
+			select {
+			case <-pc.readCtx.Done():
+				// Context cancelado durante restart, sair silenciosamente
+				return
+			default:
+			}
+			
 			if err == io.EOF {
 				pc.handleError("EOF no stream FFmpeg")
 				return
@@ -212,13 +228,39 @@ func (pc *PersistentCapture) Restart() error {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
 	
+	// Evita restarts simultâneos
+	if pc.restarting {
+		logger.Log.Debugw("Restart já em andamento, ignorando",
+			"camera_id", pc.cameraID)
+		return nil
+	}
+	
+	pc.restarting = true
+	defer func() { pc.restarting = false }()
+	
+	// Cancela a goroutine readFrames atual
+	if pc.readCancel != nil {
+		pc.readCancel()
+	}
+	
+	// Mata o processo FFmpeg
 	if pc.cmd != nil && pc.cmd.Process != nil {
 		_ = pc.cmd.Process.Kill()
 		_ = pc.cmd.Wait()
 	}
 	
+	// Fecha os pipes antigos
+	if pc.stdout != nil {
+		_ = pc.stdout.Close()
+	}
+	if pc.stderr != nil {
+		_ = pc.stderr.Close()
+	}
+	
+	// Aguarda um pouco antes de reiniciar
 	time.Sleep(time.Second)
 	
+	// Reinicia o FFmpeg
 	err := pc.startFFmpeg()
 	if err != nil {
 		logger.Log.Errorw("Erro ao reiniciar FFmpeg",
@@ -227,9 +269,13 @@ func (pc *PersistentCapture) Restart() error {
 		return err
 	}
 	
+	// Cria novo context para a nova goroutine readFrames
+	pc.readCtx, pc.readCancel = context.WithCancel(pc.ctx)
+	
 	pc.lastRestart = time.Now()
 	pc.errorCount = 0
 	
+	// Inicia nova goroutine readFrames
 	go pc.readFrames()
 	
 	logger.Log.Infow("Captura reiniciada",
@@ -278,9 +324,22 @@ func (pc *PersistentCapture) Stop() {
 	
 	pc.cancel()
 	
+	// Cancela a goroutine readFrames
+	if pc.readCancel != nil {
+		pc.readCancel()
+	}
+	
 	if pc.cmd != nil && pc.cmd.Process != nil {
 		_ = pc.cmd.Process.Kill()
 		_ = pc.cmd.Wait()
+	}
+	
+	// Fecha os pipes
+	if pc.stdout != nil {
+		_ = pc.stdout.Close()
+	}
+	if pc.stderr != nil {
+		_ = pc.stderr.Close()
 	}
 	
 	close(pc.frameBuffer)

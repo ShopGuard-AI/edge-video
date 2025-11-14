@@ -2,7 +2,11 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -14,18 +18,37 @@ type RedisStore struct {
 	ttl          time.Duration
 	enabled      bool
 	keyGenerator *KeyGenerator
+	options      *redis.Options
+	mu           sync.RWMutex
 }
 
 // NewRedisStore creates a new RedisStore.
 // vhost é o identificador único do cliente (extraído do AMQP vhost)
-func NewRedisStore(addr string, ttlSeconds int, prefix string, vhost string, enabled bool) *RedisStore {
+func NewRedisStore(addr string, ttlSeconds int, prefix string, vhost string, enabled bool, username string, password string) *RedisStore {
 	if !enabled {
 		return &RedisStore{enabled: false}
 	}
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr: addr,
-	})
+	options := &redis.Options{
+		Addr:         addr,
+		MaxRetries:   2,
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 3 * time.Second,
+		PoolTimeout:  4 * time.Second,
+		PoolSize:     64,
+		MinIdleConns: 8,
+	}
+
+	if username != "" {
+		options.Username = username
+	}
+
+	if password != "" {
+		options.Password = password
+	}
+
+	rdb := redis.NewClient(options)
 
 	// Cria o KeyGenerator com estratégia sequence (recomendado para prevenir colisões)
 	keyGen := NewKeyGenerator(KeyGeneratorConfig{
@@ -39,6 +62,7 @@ func NewRedisStore(addr string, ttlSeconds int, prefix string, vhost string, ena
 		ttl:          time.Duration(ttlSeconds) * time.Second,
 		enabled:      true,
 		keyGenerator: keyGen,
+		options:      options,
 	}
 }
 
@@ -56,11 +80,32 @@ func (r *RedisStore) SaveFrame(ctx context.Context, cameraID string, timestamp t
 	}
 
 	key := r.keyGenerator.GenerateKey(cameraID, timestamp)
-	err := r.client.Set(ctx, key, data, r.ttl).Err()
-	if err != nil {
-		return "", fmt.Errorf("failed to save frame to redis: %w", err)
+	var lastErr error
+
+	for attempt := 0; attempt < 2; attempt++ {
+		client := r.getClient()
+		if client == nil {
+			return "", fmt.Errorf("failed to save frame to redis: client not initialized")
+		}
+
+		err := client.Set(ctx, key, data, r.ttl).Err()
+		if err == nil {
+			return key, nil
+		}
+
+		lastErr = err
+
+		if !r.shouldRetry(err) {
+			break
+		}
+
+		if recErr := r.reconnect(); recErr != nil {
+			lastErr = fmt.Errorf("%w; reconnect failed: %v", err, recErr)
+			break
+		}
 	}
-	return key, nil
+
+	return "", fmt.Errorf("failed to save frame to redis: %w", lastErr)
 }
 
 // GetFrame retrieves a frame by its exact key
@@ -87,7 +132,7 @@ func (r *RedisStore) QueryFrames(ctx context.Context, cameraID string) ([]string
 	}
 
 	pattern := r.keyGenerator.QueryPattern(cameraID, "")
-	
+
 	var keys []string
 	iter := r.client.Scan(ctx, 0, pattern, 100).Iterator()
 	for iter.Next(ctx) {
@@ -106,4 +151,55 @@ func (r *RedisStore) GetVhost() string {
 		return ""
 	}
 	return r.keyGenerator.GetConfig().Vhost
+}
+
+func (r *RedisStore) getClient() *redis.Client {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.client
+}
+
+func (r *RedisStore) reconnect() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.client != nil {
+		_ = r.client.Close()
+	}
+
+	r.client = redis.NewClient(r.options)
+
+	pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	return r.client.Ping(pingCtx).Err()
+}
+
+func (r *RedisStore) shouldRetry(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+
+	message := err.Error()
+	if strings.Contains(message, "broken pipe") {
+		return true
+	}
+
+	if strings.Contains(message, "connection reset by peer") {
+		return true
+	}
+
+	if strings.Contains(message, "use of closed network connection") {
+		return true
+	}
+
+	return false
 }

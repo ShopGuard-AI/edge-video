@@ -43,6 +43,8 @@ type Optimization struct {
 type RedisConfig struct {
 	Enabled    bool   `mapstructure:"enabled"`
 	Address    string `mapstructure:"address"`
+	Username   string `mapstructure:"username"`
+	Password   string `mapstructure:"password"`
 	TTLSeconds int    `mapstructure:"ttl_seconds"`
 	Prefix     string `mapstructure:"prefix"`
 }
@@ -53,17 +55,23 @@ type MetadataConfig struct {
 	RoutingKey string `mapstructure:"routing_key"`
 }
 
+type RegistrationConfig struct {
+	Enabled bool   `mapstructure:"enabled"`
+	APIURL  string `mapstructure:"api_url"`
+}
+
 type Config struct {
-	TargetFPS           float64        `mapstructure:"target_fps"`
-	Protocol            string         `mapstructure:"protocol"`
-	UseOptimizedCapture bool           `mapstructure:"use_optimized_capture"`
-	AMQP                AMQPConfig     `mapstructure:"amqp"`
-	MQTT                MQTTConfig     `mapstructure:"mqtt"`
-	Redis               RedisConfig    `mapstructure:"redis"`
-	Metadata            MetadataConfig `mapstructure:"metadata"`
-	Compression         Compression    `mapstructure:"compression"`
-	Optimization        Optimization   `mapstructure:"optimization"`
-	Cameras             []CameraConfig `mapstructure:"cameras"`
+	TargetFPS           float64            `mapstructure:"target_fps"`
+	Protocol            string             `mapstructure:"protocol"`
+	UseOptimizedCapture bool               `mapstructure:"use_optimized_capture"`
+	AMQP                AMQPConfig         `mapstructure:"amqp"`
+	MQTT                MQTTConfig         `mapstructure:"mqtt"`
+	Redis               RedisConfig        `mapstructure:"redis"`
+	Metadata            MetadataConfig     `mapstructure:"metadata"`
+	Registration        RegistrationConfig `mapstructure:"registration"`
+	Compression         Compression        `mapstructure:"compression"`
+	Optimization        Optimization       `mapstructure:"optimization"`
+	Cameras             []CameraConfig     `mapstructure:"cameras"`
 }
 
 // GetFrameInterval calcula o intervalo de tempo entre os frames com base no TargetFPS.
@@ -94,16 +102,16 @@ func (c *Config) ExtractVhostFromAMQP() string {
 	if c.AMQP.AmqpURL == "" {
 		return "/"
 	}
-	
+
 	parsedURL, err := url.Parse(c.AMQP.AmqpURL)
 	if err != nil {
 		return "/"
 	}
-	
+
 	vhost := strings.TrimPrefix(parsedURL.Path, "/")
 	if vhost == "" {
 		return "/"
 	}
-	
+
 	return vhost
 }

@@ -1,0 +1,101 @@
+name: Windows Installer Build
+
+on:
+  push:
+    tags:
+      - 'v*'  # Triggers on version tags like v1.0.0
+    branches:
+      - main
+      - feature/performance-improvements
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  GO_VERSION: '1.24'
+  PRODUCT_NAME: 'EdgeVideo'
+  PRODUCT_VERSION: '1.2.0'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Install NSIS
+      run: |
+        choco install nsis -y
+        echo "C:\Program Files (x86)\NSIS" >> $GITHUB_PATH
+      shell: pwsh
+
+    - name: Get dependencies
+      run: go mod download
+
+    - name: Run tests
+      run: go test -v ./...
+
+    - name: Build Windows Service Binary
+      run: |
+        $env:GOOS = "windows"
+        $env:GOARCH = "amd64"
+        $env:CGO_ENABLED = "0"
+        go build -ldflags="-s -w -X main.version=${{ env.PRODUCT_VERSION }}" -o dist/edge-video-service.exe ./cmd/edge-video-service
+      shell: pwsh
+
+    - name: Build Windows CLI Binary
+      run: |
+        $env:GOOS = "windows"
+        $env:GOARCH = "amd64" 
+        $env:CGO_ENABLED = "0"
+        go build -ldflags="-s -w -X main.version=${{ env.PRODUCT_VERSION }}" -o dist/edge-video.exe ./cmd/edge-video
+      shell: pwsh
+
+    - name: Copy configuration files
+      run: |
+        New-Item -ItemType Directory -Force -Path dist/config
+        Copy-Item config.toml dist/config/
+        Copy-Item -Path "docs/windows" -Destination "dist/" -Recurse -ErrorAction SilentlyContinue
+      shell: pwsh
+
+    - name: Build NSIS Installer
+      run: |
+        makensis /DPRODUCT_VERSION="${{ env.PRODUCT_VERSION }}" installer/windows/edge-video-installer.nsi
+      shell: pwsh
+
+    - name: Calculate checksums
+      run: |
+        Get-FileHash dist/EdgeVideoSetup-${{ env.PRODUCT_VERSION }}.exe -Algorithm SHA256 | Format-Table -HideTableHeaders | Out-String | Set-Content dist/EdgeVideoSetup-${{ env.PRODUCT_VERSION }}.exe.sha256
+        Get-FileHash dist/edge-video-service.exe -Algorithm SHA256 | Format-Table -HideTableHeaders | Out-String | Set-Content dist/edge-video-service.exe.sha256
+      shell: pwsh
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: edge-video-windows-${{ env.PRODUCT_VERSION }}
+        path: |
+          dist/EdgeVideoSetup-${{ env.PRODUCT_VERSION }}.exe
+          dist/EdgeVideoSetup-${{ env.PRODUCT_VERSION }}.exe.sha256
+          dist/edge-video-service.exe
+          dist/edge-video-service.exe.sha256
+          dist/edge-video.exe
+        retention-days: 30
+
+    - name: Create Release (on tags)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          dist/EdgeVideoSetup-${{ env.PRODUCT_VERSION }}.exe
+          dist/EdgeVideoSetup-${{ env.PRODUCT_VERSION }}.exe.sha256
+        generate_release_notes: true
+        prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -5,30 +5,29 @@ services:
     build: .
     container_name: camera-collector
     restart: unless-stopped
+    network_mode: "host"
     volumes:
       # Monta o config.toml (pode ser customizado via variável de ambiente)
       - ${CONFIG_PATH:-./config.toml}:/app/config.toml
     # Para usar um arquivo de configuração diferente, descomente e ajuste:
     # command: ["./camera-collector", "--config", "/app/config.toml"]
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    # Opcional: descomente se precisar que a rede do host seja usada
-    # network_mode: "host"
+    # Nota: network_mode: host não é compatível com depends_on
+    # Certifique-se de que Redis e RabbitMQ estão rodando antes de iniciar
 
   redis:
     image: redis:7-alpine
     container_name: redis
     restart: always
     ports:
-      - "6379:6379"
+      - "6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
+
+
+
 
   redisinsight:
     image: redis/redisinsight:latest
@@ -45,6 +44,7 @@ services:
   rabbitmq:
     image: "rabbitmq:3.13-management-alpine"
     container_name: rabbitmq
+    restart: always
     ports:
       # Porta para o protocolo AMQP
       - "5672:5672"

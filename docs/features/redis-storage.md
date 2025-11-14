@@ -10,7 +10,7 @@ O Redis Storage oferece:
 - ✅ **Multi-Tenant**: Isolamento por vhost do RabbitMQ
 - ✅ **Performance Otimizada**: Formato de chave ultra-eficiente (Unix nanoseconds)
 - ✅ **Acesso Rápido**: Latência sub-milissegundo para queries
-- ✅ **Autenticação**: Suporte a password para ambientes seguros
+- ✅ **Autenticação**: Suporte a username/password para ambientes seguros
 
 ## Configuração Básica
 
@@ -20,6 +20,7 @@ O Redis Storage oferece:
     [redis]
     enabled = true
     address = "redis:6379"
+    username = ""  # Opcional
     password = ""  # Opcional
     ttl_seconds = 300
     prefix = "frames"

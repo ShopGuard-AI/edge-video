@@ -19,6 +19,7 @@ import (
 	"github.com/T3-Labs/edge-video/pkg/logger"
 	"github.com/T3-Labs/edge-video/pkg/metrics"
 	"github.com/T3-Labs/edge-video/pkg/mq"
+	"github.com/T3-Labs/edge-video/pkg/registration"
 	"github.com/T3-Labs/edge-video/pkg/util"
 	"github.com/T3-Labs/edge-video/pkg/worker"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -56,6 +57,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Registra o serviço na API (se habilitado)
+	// Tenta registrar com retry automático a cada 1 minuto em caso de falha
+	registrationClient := registration.NewClient(cfg.Registration.APIURL, cfg.Registration.Enabled)
+	registrationClient.RegisterWithRetry(ctx, cfg, vhost)
+
 	workerPool := worker.NewPool(ctx, cfg.Optimization.MaxWorkers, cfg.Optimization.BufferSize)
 	defer workerPool.Close()
 
@@ -79,7 +85,15 @@ func main() {
 
 	// Cria RedisStore usando o vhost como identificador do cliente
 	// Isso garante isolamento entre múltiplas instâncias usando diferentes vhosts
-	redisStore := storage.NewRedisStore(cfg.Redis.Address, cfg.Redis.TTLSeconds, cfg.Redis.Prefix, vhost, cfg.Redis.Enabled)
+	redisStore := storage.NewRedisStore(
+		cfg.Redis.Address,
+		cfg.Redis.TTLSeconds,
+		cfg.Redis.Prefix,
+		vhost,
+		cfg.Redis.Enabled,
+		cfg.Redis.Username,
+		cfg.Redis.Password,
+	)
 	if redisStore.Enabled() {
 		logger.Log.Infow("Redis Store configurado",
 			"vhost", vhost,
@@ -109,19 +123,19 @@ func main() {
 
 	for _, camCfg := range cfg.Cameras {
 		frameBuffer := buffer.NewFrameBuffer(cfg.Optimization.BufferSize)
-		
+
 		resetTimeout := time.Duration(cfg.Optimization.CircuitResetSec) * time.Second
 		if resetTimeout == 0 {
 			resetTimeout = 60 * time.Second
 		}
-		
+
 		maxFailures := int64(cfg.Optimization.CircuitMaxFailures)
 		if maxFailures == 0 {
 			maxFailures = 5
 		}
-		
+
 		circuitBreaker := circuit.NewBreaker(camCfg.ID, maxFailures, resetTimeout)
-		
+
 		capture := camera.NewCapture(
 			ctx,
 			camera.Config{ID: camCfg.ID, URL: camCfg.URL},
@@ -137,7 +151,7 @@ func main() {
 		)
 
 		capture.Start()
-		
+
 		logger.Log.Infow("Câmera iniciada",
 			"camera_id", camCfg.ID,
 			"camera_name", camCfg.Name,
@@ -147,20 +161,20 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
-	
+
 	logger.Log.Info("Recebido sinal de finalização, encerrando...")
 	cancel()
-	
+
 	time.Sleep(2 * time.Second)
-	
+
 	logger.Log.Info("Aplicação finalizada")
 }
 
 func startMetricsServer(addr string) {
 	http.Handle("/metrics", promhttp.Handler())
-	
+
 	logger.Log.Infow("Servidor de métricas iniciado", "address", addr)
-	
+
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		logger.Log.Errorw("Erro no servidor de métricas", "error", err)
 	}
@@ -169,13 +183,13 @@ func startMetricsServer(addr string) {
 func monitorSystem(pool *worker.Pool) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	
+
 	for range ticker.C {
 		stats := pool.Stats()
-		
+
 		metrics.WorkerPoolQueueSize.WithLabelValues("main").Set(float64(stats.QueueSize))
 		metrics.WorkerPoolProcessing.WithLabelValues("main").Set(float64(stats.Processing))
-		
+
 		logger.Log.Infow("System stats",
 			"pool_stats", stats.String())
 	}

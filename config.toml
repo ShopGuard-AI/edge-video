@@ -8,9 +8,9 @@ protocol = "amqp"
 
 # Configuração AMQP (RabbitMQ)
 [amqp]
-amqp_url = "amqp://user:password@rabbitmq:5672/supermercado_vhost"
-vhost =  "supermercado_vhost"
-exchange = "supermercado_exchange"
+amqp_url = "amqp://sonda_supermercados_1:lOYmsoBE5s33npUBbcdWV8pHGI57Wp0jApzLwbvoJ78@34.71.212.239:5672/sonda_supermercados_1"
+vhost =  "sonda_supermercados_1"
+exchange = "sonda_supermercados_1_exchange"
 routing_key_prefix = "camera."
 
 # Configuração MQTT
@@ -31,8 +31,8 @@ circuit_reset_seconds = 60          # Tempo para tentar reconectar (segundos)
 # Configuração Redis (armazenamento de frames)
 [redis]
 enabled = true
-address = "redis:6379"
-ttl_seconds = 60
+address = "127.0.0.1:6380"
+ttl_seconds = 30
 prefix = "frames"
 
 # Configuração de Metadados (publicação de metadados de frames)
@@ -40,6 +40,13 @@ prefix = "frames"
 enabled = true
 exchange = "camera.metadata"
 routing_key = "camera.metadata.event"
+
+# Configuração de Registro na API
+# Envia dados do sistema para uma API ao iniciar
+# Em caso de falha, tenta novamente a cada 1 minuto
+[registration]
+enabled = true
+api_url = "http://localhost:8000/camera"
 
 # Câmeras RTSP
 [[cameras]]

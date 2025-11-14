@@ -26,18 +26,18 @@ type Config struct {
 }
 
 type Capture struct {
-	ctx              context.Context
-	config           Config
-	interval         time.Duration
-	compressor       *util.Compressor
-	publisher        mq.Publisher
-	redisStore       *storage.RedisStore
-	metaPublisher    *metadata.Publisher
-	workerPool       *worker.Pool
-	frameBuffer      *buffer.FrameBuffer
-	circuitBreaker   *circuit.Breaker
+	ctx               context.Context
+	config            Config
+	interval          time.Duration
+	compressor        *util.Compressor
+	publisher         mq.Publisher
+	redisStore        *storage.RedisStore
+	metaPublisher     *metadata.Publisher
+	workerPool        *worker.Pool
+	frameBuffer       *buffer.FrameBuffer
+	circuitBreaker    *circuit.Breaker
 	persistentCapture *PersistentCapture
-	usePersistent    bool
+	usePersistent     bool
 }
 
 func NewCapture(
@@ -66,7 +66,7 @@ func NewCapture(
 		circuitBreaker: circuitBreaker,
 		usePersistent:  usePersistent,
 	}
-	
+
 	if usePersistent {
 		fps := int(time.Second / interval)
 		if fps == 0 {
@@ -74,7 +74,7 @@ func NewCapture(
 		}
 		capture.persistentCapture = NewPersistentCapture(ctx, config.ID, config.URL, 5, fps)
 	}
-	
+
 	return capture
 }
 
@@ -92,7 +92,7 @@ func (c *Capture) Start() {
 			return
 		}
 	}
-	
+
 	go c.classicCaptureLoop()
 	metrics.CameraConnected.WithLabelValues(c.config.ID).Set(1)
 }
@@ -100,10 +100,10 @@ func (c *Capture) Start() {
 func (c *Capture) persistentCaptureLoop() {
 	logger.Log.Infow("Iniciando loop de captura persistente",
 		"camera_id", c.config.ID)
-	
+
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -112,14 +112,14 @@ func (c *Capture) persistentCaptureLoop() {
 			c.persistentCapture.Stop()
 			metrics.CameraConnected.WithLabelValues(c.config.ID).Set(0)
 			return
-			
+
 		case <-ticker.C:
 			frame, ok := c.persistentCapture.GetFrameWithTimeout(c.interval / 2)
 			if !ok {
 				metrics.FramesDropped.WithLabelValues(c.config.ID, "no_frame_available").Inc()
 				continue
 			}
-			
+
 			job := &FrameProcessJob{
 				cameraID:      c.config.ID,
 				frameData:     frame,
@@ -128,12 +128,16 @@ func (c *Capture) persistentCaptureLoop() {
 				redisStore:    c.redisStore,
 				metaPublisher: c.metaPublisher,
 			}
-			
-			err := c.workerPool.Submit(job)
-			if err != nil {
+
+			if err := c.workerPool.Submit(job); err != nil {
 				metrics.FramesDropped.WithLabelValues(c.config.ID, "worker_pool_full").Inc()
-				logger.Log.Warnw("Worker pool cheio, frame descartado",
+				logger.Log.Warnw("Worker pool cheio, processando sincronamente",
 					"camera_id", c.config.ID)
+				if procErr := job.Process(c.ctx); procErr != nil {
+					logger.Log.Errorw("Erro ao processar frame após fallback",
+						"camera_id", c.config.ID,
+						"error", procErr)
+				}
 			}
 		}
 	}
@@ -150,13 +154,13 @@ func (c *Capture) classicCaptureLoop() {
 				"camera_id", c.config.ID)
 			metrics.CameraConnected.WithLabelValues(c.config.ID).Set(0)
 			return
-			
+
 		default:
 		}
-		
+
 		start := time.Now()
 		c.captureAndPublish()
-		
+
 		elapsed := time.Since(start)
 		sleepTime := c.interval - elapsed
 		if sleepTime > 0 {
@@ -167,11 +171,11 @@ func (c *Capture) classicCaptureLoop() {
 
 func (c *Capture) captureAndPublish() {
 	start := time.Now()
-	
+
 	err := c.circuitBreaker.Call(func() error {
 		return c.doCapture()
 	})
-	
+
 	if err != nil {
 		logger.Log.Errorw("Erro na captura com circuit breaker",
 			"camera_id", c.config.ID,
@@ -179,7 +183,7 @@ func (c *Capture) captureAndPublish() {
 		metrics.FramesDropped.WithLabelValues(c.config.ID, "circuit_breaker_open").Inc()
 		return
 	}
-	
+
 	metrics.CaptureLatency.WithLabelValues(c.config.ID).Observe(time.Since(start).Seconds())
 }
 
@@ -217,11 +221,11 @@ func (c *Capture) doCapture() error {
 	}
 
 	metrics.FrameSizeBytes.WithLabelValues(c.config.ID).Observe(float64(len(frameData)))
-	
+
 	logger.Log.Debugw("Frame capturado",
 		"camera_id", c.config.ID,
 		"size_bytes", len(frameData))
-	
+
 	job := &FrameProcessJob{
 		cameraID:      c.config.ID,
 		frameData:     frameData,
@@ -230,7 +234,7 @@ func (c *Capture) doCapture() error {
 		redisStore:    c.redisStore,
 		metaPublisher: c.metaPublisher,
 	}
-	
+
 	err = c.workerPool.Submit(job)
 	if err != nil {
 		metrics.FramesDropped.WithLabelValues(c.config.ID, "worker_pool_full").Inc()
@@ -238,7 +242,7 @@ func (c *Capture) doCapture() error {
 			"camera_id", c.config.ID)
 		return job.Process(c.ctx)
 	}
-	
+
 	return nil
 }
 
@@ -257,7 +261,7 @@ func (j *FrameProcessJob) GetID() string {
 
 func (j *FrameProcessJob) Process(ctx context.Context) error {
 	start := time.Now()
-	
+
 	err := j.publisher.Publish(ctx, j.cameraID, j.frameData)
 	if err != nil {
 		logger.Log.Errorw("Erro ao publicar frame",
@@ -265,13 +269,13 @@ func (j *FrameProcessJob) Process(ctx context.Context) error {
 			"error", err)
 		return err
 	}
-	
+
 	metrics.PublishLatency.WithLabelValues("amqp").Observe(time.Since(start).Seconds())
 	metrics.FramesProcessed.WithLabelValues(j.cameraID).Inc()
-	
+
 	if j.redisStore.Enabled() {
 		width, height := 1280, 720
-		
+
 		key, err := j.redisStore.SaveFrame(ctx, j.cameraID, j.timestamp, j.frameData)
 		if err != nil {
 			if errors.Is(err, redis.ErrClosed) {
@@ -286,9 +290,9 @@ func (j *FrameProcessJob) Process(ctx context.Context) error {
 			metrics.StorageOperations.WithLabelValues("save_frame", "error").Inc()
 			return err
 		}
-		
+
 		metrics.StorageOperations.WithLabelValues("save_frame", "success").Inc()
-		
+
 		if j.metaPublisher.Enabled() {
 			err = j.metaPublisher.PublishMetadata(j.cameraID, j.timestamp, key, width, height, len(j.frameData), "jpeg")
 			if err != nil {
@@ -305,6 +309,6 @@ func (j *FrameProcessJob) Process(ctx context.Context) error {
 			}
 		}
 	}
-	
+
 	return nil
 }
