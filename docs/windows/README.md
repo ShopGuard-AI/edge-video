@@ -171,7 +171,10 @@ For optimal performance on Windows:
 ```toml
 [optimization]
 max_workers = 20              # Adjust based on CPU cores
-buffer_size = 200             # Increase for high-traffic cameras  
+worker_queue_size = 200       # Queue size for worker pool
+camera_buffer_size = 200      # Frames queued per camera
+persistent_buffer_size = 100  # Internal FFmpeg buffer size  
+buffer_size = 200             # Legacy fallback for older builds  
 frame_quality = 5             # Balance quality vs performance
 use_persistent = true         # Better for stable connections
 circuit_max_failures = 3     # Faster failure detection
