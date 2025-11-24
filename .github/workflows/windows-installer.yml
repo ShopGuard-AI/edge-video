@@ -90,7 +90,7 @@ jobs:
 
     - name: Build NSIS Installer
       run: |
-        & "C:\Program Files (x86)\NSIS\makensis.exe" /DPRODUCT_VERSION="$env:PRODUCT_VERSION" installer/windows/edge-video-installer.nsi
+        & "C:\Program Files (x86)\NSIS\makensis.exe" /DPRODUCT_VERSION="$env:PRODUCT_VERSION" /DWORKSPACE_DIR="${{ github.workspace }}" installer/windows/edge-video-installer.nsi
       shell: pwsh
 
     - name: Calculate checksums
