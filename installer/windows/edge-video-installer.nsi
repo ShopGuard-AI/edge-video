@@ -14,16 +14,8 @@
 !endif
 
 ; Normalize version to 4-part format (X.Y.Z.W) required by VIProductVersion
-; Default to adding .0 suffix (works for X.Y.Z format)
+; Simplificado: assume formato semântico X.Y.Z e adiciona .0
 !define PRODUCT_VERSION_4PART "${PRODUCT_VERSION}.0"
-
-; Try to detect if version already has 4 parts by checking for multiple dots
-!searchparse "${PRODUCT_VERSION}" "" _V1 "." _V2 "." _V3 "." _V4
-!ifdef _V4
-  ; Version already has 4 parts, don't add .0
-  !undef PRODUCT_VERSION_4PART
-  !define PRODUCT_VERSION_4PART "${PRODUCT_VERSION}"
-!endif
 
 SetCompressor lzma
 
