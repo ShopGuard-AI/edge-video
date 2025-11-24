@@ -14,11 +14,20 @@
 !endif
 
 ; Normalize version to 4-part format (X.Y.Z.W) required by VIProductVersion
-!searchparse "${PRODUCT_VERSION}" "" VER_MAJOR "." VER_MINOR "." VER_PATCH "." VER_BUILD
-!ifndef VER_BUILD
-  !define PRODUCT_VERSION_4PART "${PRODUCT_VERSION}.0"
-!else
+; Count dots in version string to determine format
+!searchparse "${PRODUCT_VERSION}" "" VER_PART1 "." VER_PART2 "." VER_PART3 "." VER_PART4 ""
+!ifdef VER_PART4
+  ; Already 4 parts (X.Y.Z.W)
   !define PRODUCT_VERSION_4PART "${PRODUCT_VERSION}"
+!else ifdef VER_PART3
+  ; 3 parts (X.Y.Z) - add .0
+  !define PRODUCT_VERSION_4PART "${PRODUCT_VERSION}.0"
+!else ifdef VER_PART2
+  ; 2 parts (X.Y) - add .0.0
+  !define PRODUCT_VERSION_4PART "${PRODUCT_VERSION}.0.0"
+!else
+  ; 1 part (X) - add .0.0.0
+  !define PRODUCT_VERSION_4PART "${PRODUCT_VERSION}.0.0.0"
 !endif
 
 SetCompressor lzma
