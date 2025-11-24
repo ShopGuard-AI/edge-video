@@ -601,7 +601,10 @@ Get-WinEvent -LogName Application -MaxEvents 10 | Where-Object {$_.ProviderName 
 # config.toml otimizado para Windows
 [optimization]
 max_workers = 16              # Cores disponíveis
-buffer_size = 100             # Reduzir se pouca RAM
+worker_queue_size = 200       # Jobs aguardando no worker pool
+camera_buffer_size = 150      # Frames por câmera antes de descartar
+persistent_buffer_size = 75   # Buffer interno da captura persistente
+buffer_size = 100             # Compatibilidade com versões antigas
 frame_quality = 7             # Maior = menor CPU
 use_persistent = true         # Melhor para Windows
 ```

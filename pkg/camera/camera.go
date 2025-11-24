@@ -27,6 +27,8 @@ type Config struct {
 
 type Capture struct {
 	ctx               context.Context
+	bufferCtx         context.Context
+	bufferCancel      context.CancelFunc
 	config            Config
 	interval          time.Duration
 	compressor        *util.Compressor
@@ -52,9 +54,14 @@ func NewCapture(
 	frameBuffer *buffer.FrameBuffer,
 	circuitBreaker *circuit.Breaker,
 	usePersistent bool,
+	persistentBufferSize int,
 ) *Capture {
+	bufferCtx, bufferCancel := context.WithCancel(ctx)
+
 	capture := &Capture{
 		ctx:            ctx,
+		bufferCtx:      bufferCtx,
+		bufferCancel:   bufferCancel,
 		config:         config,
 		interval:       interval,
 		compressor:     compressor,
@@ -72,13 +79,15 @@ func NewCapture(
 		if fps == 0 {
 			fps = 30
 		}
-		capture.persistentCapture = NewPersistentCapture(ctx, config.ID, config.URL, 5, fps)
+		capture.persistentCapture = NewPersistentCapture(ctx, config.ID, config.URL, 5, fps, persistentBufferSize)
 	}
 
 	return capture
 }
 
 func (c *Capture) Start() {
+	go c.bufferDispatcher()
+
 	if c.usePersistent && c.persistentCapture != nil {
 		err := c.persistentCapture.Start()
 		if err != nil {
@@ -95,6 +104,33 @@ func (c *Capture) Start() {
 
 	go c.classicCaptureLoop()
 	metrics.CameraConnected.WithLabelValues(c.config.ID).Set(1)
+}
+
+func (c *Capture) bufferDispatcher() {
+	for {
+		frame, ok := c.frameBuffer.PopBlocking(c.bufferCtx)
+		if !ok {
+			if c.bufferCtx.Err() != nil {
+				return
+			}
+			continue
+		}
+
+		job := c.newJob(frame)
+
+		if err := c.workerPool.Submit(job); err != nil {
+			metrics.FramesDropped.WithLabelValues(c.config.ID, "worker_pool_full").Inc()
+			logger.Log.Warnw("Worker pool cheio, processando sincronamente",
+				"camera_id", c.config.ID)
+			if procErr := job.Process(c.ctx); procErr != nil {
+				logger.Log.Errorw("Erro ao processar frame após fallback",
+					"camera_id", c.config.ID,
+					"error", procErr)
+			}
+		}
+
+		metrics.BufferSize.WithLabelValues(c.config.ID).Set(float64(c.frameBuffer.Size()))
+	}
 }
 
 func (c *Capture) persistentCaptureLoop() {
@@ -120,25 +156,8 @@ func (c *Capture) persistentCaptureLoop() {
 				continue
 			}
 
-			job := &FrameProcessJob{
-				cameraID:      c.config.ID,
-				frameData:     frame,
-				timestamp:     time.Now(),
-				publisher:     c.publisher,
-				redisStore:    c.redisStore,
-				metaPublisher: c.metaPublisher,
-			}
-
-			if err := c.workerPool.Submit(job); err != nil {
-				metrics.FramesDropped.WithLabelValues(c.config.ID, "worker_pool_full").Inc()
-				logger.Log.Warnw("Worker pool cheio, processando sincronamente",
-					"camera_id", c.config.ID)
-				if procErr := job.Process(c.ctx); procErr != nil {
-					logger.Log.Errorw("Erro ao processar frame após fallback",
-						"camera_id", c.config.ID,
-						"error", procErr)
-				}
-			}
+			metrics.FrameSizeBytes.WithLabelValues(c.config.ID).Observe(float64(len(frame)))
+			c.enqueueFrame(frame, false)
 		}
 	}
 }
@@ -226,24 +245,53 @@ func (c *Capture) doCapture() error {
 		"camera_id", c.config.ID,
 		"size_bytes", len(frameData))
 
-	job := &FrameProcessJob{
-		cameraID:      c.config.ID,
-		frameData:     frameData,
-		timestamp:     time.Now(),
+	c.enqueueFrame(frameData, true)
+	return nil
+}
+
+func (c *Capture) enqueueFrame(frameData []byte, copyData bool) {
+	if len(frameData) == 0 {
+		logger.Log.Warnw("Frame vazio recebido ao enfileirar",
+			"camera_id", c.config.ID)
+		return
+	}
+
+	data := frameData
+	if copyData {
+		buf := getFrameBuffer(len(frameData))
+		copy(buf, frameData)
+		data = buf
+	}
+
+	frame := buffer.Frame{
+		CameraID:  c.config.ID,
+		Data:      data,
+		Timestamp: time.Now(),
+		Release: func() {
+			releaseFrameBuffer(data)
+		},
+	}
+
+	if err := c.frameBuffer.Push(frame); err != nil {
+		metrics.FramesDropped.WithLabelValues(c.config.ID, "frame_buffer_full").Inc()
+		logger.Log.Warnw("Frame buffer cheio, frame substituído",
+			"camera_id", c.config.ID,
+			"buffer_size", c.frameBuffer.Capacity())
+	}
+
+	metrics.BufferSize.WithLabelValues(c.config.ID).Set(float64(c.frameBuffer.Size()))
+}
+
+func (c *Capture) newJob(frame buffer.Frame) *FrameProcessJob {
+	return &FrameProcessJob{
+		cameraID:      frame.CameraID,
+		frameData:     frame.Data,
+		timestamp:     frame.Timestamp,
 		publisher:     c.publisher,
 		redisStore:    c.redisStore,
 		metaPublisher: c.metaPublisher,
+		release:       frame.Release,
 	}
-
-	err = c.workerPool.Submit(job)
-	if err != nil {
-		metrics.FramesDropped.WithLabelValues(c.config.ID, "worker_pool_full").Inc()
-		logger.Log.Warnw("Worker pool cheio, processando sincronamente",
-			"camera_id", c.config.ID)
-		return job.Process(c.ctx)
-	}
-
-	return nil
 }
 
 type FrameProcessJob struct {
@@ -253,6 +301,7 @@ type FrameProcessJob struct {
 	publisher     mq.Publisher
 	redisStore    *storage.RedisStore
 	metaPublisher *metadata.Publisher
+	release       func()
 }
 
 func (j *FrameProcessJob) GetID() string {
@@ -260,6 +309,11 @@ func (j *FrameProcessJob) GetID() string {
 }
 
 func (j *FrameProcessJob) Process(ctx context.Context) error {
+	defer func() {
+		if j.release != nil {
+			j.release()
+		}
+	}()
 	start := time.Now()
 
 	err := j.publisher.Publish(ctx, j.cameraID, j.frameData)

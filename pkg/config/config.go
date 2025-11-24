@@ -33,6 +33,9 @@ type Compression struct {
 type Optimization struct {
 	MaxWorkers         int    `mapstructure:"max_workers"`
 	BufferSize         int    `mapstructure:"buffer_size"`
+	WorkerQueueSize    int    `mapstructure:"worker_queue_size"`
+	CameraBufferSize   int    `mapstructure:"camera_buffer_size"`
+	PersistentBufSize  int    `mapstructure:"persistent_buffer_size"`
 	FrameQuality       int    `mapstructure:"frame_quality"`
 	FrameResolution    string `mapstructure:"frame_resolution"`
 	UsePersistent      bool   `mapstructure:"use_persistent"`

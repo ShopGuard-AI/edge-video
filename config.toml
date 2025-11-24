@@ -21,7 +21,10 @@ topic_prefix = "camera/"
 # Configurações de otimização de performance
 [optimization]
 max_workers = 20                    # Número de workers para processar frames
-buffer_size = 200                   # Tamanho do buffer de frames
+worker_queue_size = 200             # Tamanho da fila de jobs do worker pool
+camera_buffer_size = 200            # Tamanho do buffer de frames por câmera
+persistent_buffer_size = 100        # Tamanho do buffer interno da captura persistente
+buffer_size = 200                   # Compatibilidade com versões antigas
 frame_quality = 5                   # Qualidade JPEG (2-31, menor = melhor)
 frame_resolution = "1280x720"       # Resolução dos frames
 use_persistent = true               # Usar captura persistente FFmpeg

@@ -177,6 +177,10 @@ func (p *AMQPPublisher) GetChannel() *amqp.Channel {
 // Example: amqp://user:pass@localhost:5672/myvhost -> "myvhost"
 // If no vhost is specified, returns "/" (default vhost).
 func ExtractVhostFromURL(amqpURL string) (string, error) {
+	if !strings.HasPrefix(amqpURL, "amqp://") && !strings.HasPrefix(amqpURL, "amqps://") {
+		return "", fmt.Errorf("invalid amqp url: %s", amqpURL)
+	}
+
 	parsedURL, err := url.Parse(amqpURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse AMQP URL: %w", err)

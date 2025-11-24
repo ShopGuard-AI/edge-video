@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -35,7 +36,7 @@ func main() {
 		log.Fatalf("erro ao inicializar logger: %v", err)
 	}
 	defer logger.Sync()
-	
+
 	cfg, err := config.LoadConfig(*configFile)
 	if err != nil {
 		logger.Log.Fatalw("Erro ao carregar config", "error", err, "config_file", *configFile)
@@ -45,13 +46,44 @@ func main() {
 	vhost := cfg.ExtractVhostFromAMQP()
 
 	interval := cfg.GetFrameInterval()
+	maxWorkers := cfg.Optimization.MaxWorkers
+	if maxWorkers <= 0 {
+		maxWorkers = runtime.NumCPU() * 2
+	}
+
+	workerQueueSize := cfg.Optimization.WorkerQueueSize
+	if workerQueueSize <= 0 {
+		workerQueueSize = cfg.Optimization.BufferSize
+		if workerQueueSize <= 0 {
+			workerQueueSize = 200
+		}
+	}
+
+	cameraBufferSize := cfg.Optimization.CameraBufferSize
+	if cameraBufferSize <= 0 {
+		cameraBufferSize = cfg.Optimization.BufferSize
+		if cameraBufferSize <= 0 {
+			cameraBufferSize = 200
+		}
+	}
+
+	persistentBufferSize := cfg.Optimization.PersistentBufSize
+	if persistentBufferSize <= 0 {
+		persistentBufferSize = cameraBufferSize / 2
+		if persistentBufferSize <= 0 {
+			persistentBufferSize = 25
+		}
+	}
+
 	logger.Log.Infow("Configuração carregada",
 		"config_file", *configFile,
 		"target_fps", cfg.TargetFPS,
 		"interval", interval,
 		"cameras", len(cfg.Cameras),
-		"max_workers", cfg.Optimization.MaxWorkers,
-		"buffer_size", cfg.Optimization.BufferSize,
+		"max_workers", maxWorkers,
+		"worker_queue_size", workerQueueSize,
+		"camera_buffer_size", cameraBufferSize,
+		"persistent_buffer_size", persistentBufferSize,
 		"vhost", vhost)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -62,7 +94,7 @@ func main() {
 	registrationClient := registration.NewClient(cfg.Registration.APIURL, cfg.Registration.Enabled)
 	registrationClient.RegisterWithRetry(ctx, cfg, vhost)
 
-	workerPool := worker.NewPool(ctx, cfg.Optimization.MaxWorkers, cfg.Optimization.BufferSize)
+	workerPool := worker.NewPool(ctx, maxWorkers, workerQueueSize)
 	defer workerPool.Close()
 
 	var publisher mq.Publisher
@@ -122,7 +154,7 @@ func main() {
 	go monitorSystem(workerPool)
 
 	for _, camCfg := range cfg.Cameras {
-		frameBuffer := buffer.NewFrameBuffer(cfg.Optimization.BufferSize)
+		frameBuffer := buffer.NewFrameBuffer(cameraBufferSize)
 
 		resetTimeout := time.Duration(cfg.Optimization.CircuitResetSec) * time.Second
 		if resetTimeout == 0 {
@@ -148,6 +180,7 @@ func main() {
 			frameBuffer,
 			circuitBreaker,
 			cfg.Optimization.UsePersistent,
+			persistentBufferSize,
 		)
 
 		capture.Start()

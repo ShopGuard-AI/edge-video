@@ -141,7 +141,8 @@ sequenceDiagram
 | `retry_enabled` | `bool` | `true` | Habilita reconexão automática |
 | `retry_max_attempts` | `int` | `3` | Máximo de tentativas |
 | `retry_delay_seconds` | `int` | `5` | Delay entre tentativas |
-| `buffer_size` | `int` | `1024` | Tamanho do buffer (KB) |
+| `camera_buffer_size` | `int` | `150` | Frames que podem aguardar por câmera antes de serem descartados |
+| `buffer_size` | `int` | `1024` | **Legado**: mantido para compatibilidade, usa `camera_buffer_size` quando ausente |
 
 ## Protocolos Suportados
 
