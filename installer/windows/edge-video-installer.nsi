@@ -27,8 +27,8 @@ SetCompressor lzma
 
 ; Modern UI Configuration
 !define MUI_ABORTWARNING
-!define MUI_ICON "edge-video.ico"
-!define MUI_UNICON "edge-video.ico"
+!define MUI_ICON "installer\windows\edge-video.ico"
+!define MUI_UNICON "installer\windows\edge-video.ico"
 
 ; Welcome page
 !insertmacro MUI_PAGE_WELCOME
