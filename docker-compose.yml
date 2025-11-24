@@ -2,8 +2,7 @@ version: '3.8'
 
 services:
   camera-collector:
-    build: .
-    container_name: camera-collector
+    image: ghcr.io/t3-labs/edge-video:latest
     restart: unless-stopped
     network_mode: "host"
     volumes:
