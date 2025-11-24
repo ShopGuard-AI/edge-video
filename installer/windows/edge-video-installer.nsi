@@ -24,6 +24,7 @@ SetCompressor lzma
 !include "Sections.nsh"
 !include "LogicLib.nsh"
 !include "WinVer.nsh"
+!include "FileFunc.nsh"
 
 ; Modern UI Configuration
 !define MUI_ABORTWARNING
