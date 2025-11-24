@@ -13,6 +13,14 @@
 !define PRODUCT_VERSION "1.2.0"
 !endif
 
+; Normalize version to 4-part format (X.Y.Z.W) required by VIProductVersion
+!searchparse "${PRODUCT_VERSION}" "" VER_MAJOR "." VER_MINOR "." VER_PATCH "." VER_BUILD
+!ifndef VER_BUILD
+  !define PRODUCT_VERSION_4PART "${PRODUCT_VERSION}.0"
+!else
+  !define PRODUCT_VERSION_4PART "${PRODUCT_VERSION}"
+!endif
+
 SetCompressor lzma
 
 ; Modern UI
@@ -63,14 +71,14 @@ ShowInstDetails show
 ShowUnInstDetails show
 
 ; Version info
-VIProductVersion "${PRODUCT_VERSION}.0"
+VIProductVersion "${PRODUCT_VERSION_4PART}"
 VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
 VIAddVersionKey "Comments" "RTSP Camera Capture Service"
 VIAddVersionKey "CompanyName" "${PRODUCT_PUBLISHER}"
 VIAddVersionKey "LegalCopyright" "© 2024 ${PRODUCT_PUBLISHER}"
 VIAddVersionKey "FileDescription" "${PRODUCT_NAME} Installer"
-VIAddVersionKey "FileVersion" "${PRODUCT_VERSION}.0"
-VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}.0"
+VIAddVersionKey "FileVersion" "${PRODUCT_VERSION_4PART}"
+VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
 
 ; Request admin privileges
 RequestExecutionLevel admin
