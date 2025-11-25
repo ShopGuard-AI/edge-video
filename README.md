@@ -1,9 +1,128 @@
 # Edge Video - Sistema de Captura e Distribuição de Vídeo
 
-[![Go Tests](https://github.com/T3-Labs/edge-video/actions/workflows/go-test.yml/badge.svg)](https://github.com/T3-Labs/edge-video/actions/workflows/go-test.yml)
-[![Docker Build](https://github.com/T3-Labs/edge-video/actions/workflows/build-and-push.yml/badge.svg)](https://github.com/T3-Labs/edge-video/actions/workflows/build-and-push.yml)
-[![Go Version](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go)](https://go.dev/)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+![Go Tests](https://github.com/T3-Labs/edge-video/actions/workflows/go-test.yml/badge.svg)
+![Docker Build](https://github.com/T3-Labs/edge-video/actions/workflows/build-and-push.yml/badge.svg)
+![Go Version](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go)
+![License](https://img.shields.io/badge/License-MIT-blue.svg)
+
+---
+
+## Sobre o Edge Video
+
+O **Edge Video** é uma plataforma distribuída para captura, processamento e distribuição de vídeo de câmeras RTSP/IP, projetada para ambientes de edge computing, multi-tenant e integração com sistemas de IA, monitoramento e automação.
+
+---
+
+## Principais Features
+
+- **Multi-Câmera RTSP/IP**: Captura simultânea de múltiplas câmeras.
+- **Isolamento Multi-Tenant (RabbitMQ vhost)**: Cada cliente tem seu próprio namespace, sem colisão de dados.
+- **Chave Redis Otimizada (Unix Nanoseconds)**: Chaves compactas, ordenáveis e com queries temporais eficientes.
+- **Distribuição via RabbitMQ (AMQP) e MQTT**: Flexibilidade para diferentes integrações.
+- **Buffer Circular, Worker Pool e Circuit Breaker**: Controle de memória, fila de processamento e proteção contra overflow/falhas.
+- **Publicação de Metadados**: Eventos JSON leves para consumidores, detalhando cada frame.
+- **Armazenamento Opcional em Redis**: TTL configurável, queries rápidas e compatibilidade multi-tenant.
+- **Configuração Flexível via TOML/YAML**: Adição/remoção de câmeras, tuning de parâmetros, ativação de recursos.
+- **Instalador Windows (NSIS)**: Instalação como serviço, auto-start, logs, gerenciamento via Services.msc e CLI.
+- **Containerização Completa (Docker/Docker Compose)**: Deploy simplificado, integração com RabbitMQ e Redis.
+- **Consumer Python com OpenCV**: Visualização em grid, integração fácil para IA e monitoramento.
+- **Changelog Automatizado (Towncrier)**: Fragments, changelog por release, integração com pre-commit.
+- **Pre-commit Hooks**: Lint, formatação, validação de configs e commits semânticos.
+- **Documentação Detalhada**: Arquitetura, exemplos, troubleshooting, guias de migração e multi-tenancy.
+
+---
+
+## Como Usar
+
+### 1. Configuração
+Edite `config.toml` ou `config.yaml` para suas câmeras e parâmetros. Exemplo:
+
+```toml
+[amqp]
+amqp_url = "amqp://user:pass@rabbitmq:5672/meu-cliente"
+exchange = "cameras"
+routing_key_prefix = "camera."
+
+[redis]
+enabled = true
+address = "redis:6379"
+ttl_seconds = 300
+prefix = "frames"
+
+[[cameras]]
+id = "cam1"
+url = "rtsp://admin:pass@192.168.1.100:554/stream1"
+```
+
+### 2. Execução
+
+**Go:**
+```bash
+go build -o edge-video ./cmd/edge-video
+./edge-video --config config.toml
+```
+
+**Docker Compose:**
+```bash
+docker-compose up -d --build
+```
+
+**Instalador Windows:**
+- Baixe o instalador no GitHub Releases.
+- Instale como serviço via assistente ou CLI.
+- Gerencie pelo Services.msc ou comandos `net start/stop EdgeVideoService`.
+
+### 3. Monitoramento
+- RabbitMQ UI: `http://localhost:15672`
+- Logs locais: `logs/` ou Event Viewer (Windows)
+- Métricas: Prometheus em `:2112/metrics`
+
+### 4. Integração
+- Consuma metadados e frames via Python, Go ou qualquer linguagem compatível com AMQP/MQTT/Redis.
+- Exemplo Python:
+```python
+import pika, redis, json
+def callback(ch, method, properties, body):
+  metadata = json.loads(body)
+  frame = redis_client.get(metadata['redis_key'])
+```
+
+---
+
+## Troubleshooting
+
+- Verifique logs locais e Event Viewer.
+- Use comandos de serviço para instalar, iniciar, parar e desinstalar.
+- Consulte a documentação para migração de chaves Redis e multi-tenancy.
+
+---
+
+## Contribuição
+
+1. Fork, branch, changelog fragment, commit semântico, PR.
+2. Use pre-commit hooks para garantir qualidade.
+
+---
+
+## Documentação Avançada
+
+- [docs/windows/README.md](docs/windows/README.md): Instalação e uso no Windows
+- [docs/vhost-based-identification.md](docs/vhost-based-identification.md): Multi-tenancy e isolamento
+- [docs/features/redis-storage.md](docs/features/redis-storage.md): Detalhes do armazenamento Redis
+- [docs/features/message-queue.md](docs/features/message-queue.md): Integração RabbitMQ/MQTT
+- [docs/features/metadata.md](docs/features/metadata.md): Estrutura de metadados
+- [docs/changelog.md](docs/changelog.md): Histórico de mudanças
+
+---
+
+## Licença
+
+MIT
+
+---
+
+**Desenvolvido por T3 Labs** 🚀
 
 ## 📋 Objetivo do Projeto
 
