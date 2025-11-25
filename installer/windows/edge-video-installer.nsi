@@ -123,8 +123,8 @@ Section "Edge Video Service (Required)" SEC01
   File "..\..\dist\edge-video.exe"
   
   ; Create configuration directory and example config
-  CreateDirectory "$INSTDIR\config"
-  File /oname=config\config.toml "..\..\config.toml"
+  CreateDirectory "$INSTDIR\"
+  File /oname=config.toml "..\..\config.toml"
   
   ; Create logs directory
   CreateDirectory "$INSTDIR\logs"
@@ -159,7 +159,7 @@ SectionEnd
 Section "Start Menu Shortcuts" SEC02
   CreateDirectory "$SMPROGRAMS\T3Labs\Edge Video"
   CreateShortCut "$SMPROGRAMS\T3Labs\Edge Video\Edge Video Service Manager.lnk" "$INSTDIR\edge-video-service.exe" "" "$INSTDIR\edge-video-service.exe" 0
-  CreateShortCut "$SMPROGRAMS\T3Labs\Edge Video\Configuration.lnk" "notepad.exe" "$INSTDIR\config\config.toml"
+  CreateShortCut "$SMPROGRAMS\T3Labs\Edge Video\Configuration.lnk" "notepad.exe" "$INSTDIR\config.toml"
   CreateShortCut "$SMPROGRAMS\T3Labs\Edge Video\Uninstall.lnk" "$INSTDIR\uninstall.exe"
   
   ; Desktop shortcut for service management
@@ -224,9 +224,9 @@ Section Uninstall
   
   ; Ask about configuration
   MessageBox MB_YESNO|MB_ICONQUESTION "Do you want to remove configuration files? (This will delete your camera settings)" IDNO +3
-    RMDir /r "$INSTDIR\config"
+    RMDir /r "$INSTDIR\"
     Goto +2
-    DetailPrint "Configuration files preserved in $INSTDIR\config"
+    DetailPrint "Configuration files preserved in $INSTDIR\"
   
   RMDir "$INSTDIR"
   RMDir "$PROGRAMFILES64\T3Labs"
