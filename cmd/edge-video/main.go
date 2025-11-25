@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/T3-Labs/edge-video/pkg/circuit"
 	"github.com/T3-Labs/edge-video/pkg/config"
 	"github.com/T3-Labs/edge-video/pkg/logger"
+	"github.com/T3-Labs/edge-video/pkg/memcontrol"
 	"github.com/T3-Labs/edge-video/pkg/metrics"
 	"github.com/T3-Labs/edge-video/pkg/mq"
 	"github.com/T3-Labs/edge-video/pkg/registration"
@@ -89,6 +91,62 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Inicializa o Memory Controller
+	var memController *memcontrol.Controller
+	if cfg.Memory.Enabled {
+		memController = memcontrol.NewController(cfg.Memory.MaxMemoryMB)
+
+		if cfg.Memory.WarningPercent > 0 {
+			memConfig := memController.GetConfig()
+			memConfig.WarningPercent = cfg.Memory.WarningPercent
+			memConfig.CriticalPercent = cfg.Memory.CriticalPercent
+			memConfig.EmergencyPercent = cfg.Memory.EmergencyPercent
+			memConfig.GCTriggerPercent = cfg.Memory.GCTriggerPercent
+			if cfg.Memory.CheckInterval > 0 {
+				memConfig.CheckInterval = time.Duration(cfg.Memory.CheckInterval) * time.Second
+			}
+			memController.UpdateConfig(memConfig)
+		}
+
+		memController.Start()
+		defer memController.Stop()
+
+		// Registra callbacks para diferentes níveis de memória
+		memController.RegisterCallback(memcontrol.MemoryWarning, func(stats memcontrol.MemoryStats) {
+			logger.Log.Warnw("Memória em nível de AVISO",
+				"usage_percent", fmt.Sprintf("%.2f%%", stats.UsagePercent),
+				"alloc_mb", stats.Alloc/1024/1024)
+			metrics.MemoryUsagePercent.Set(stats.UsagePercent)
+			metrics.MemoryAllocMB.Set(float64(stats.Alloc / 1024 / 1024))
+			metrics.MemoryLevel.Set(float64(memcontrol.MemoryWarning))
+		})
+
+		memController.RegisterCallback(memcontrol.MemoryCritical, func(stats memcontrol.MemoryStats) {
+			logger.Log.Errorw("Memória em nível CRÍTICO - reduzindo velocidade de captura",
+				"usage_percent", fmt.Sprintf("%.2f%%", stats.UsagePercent),
+				"alloc_mb", stats.Alloc/1024/1024)
+			metrics.MemoryUsagePercent.Set(stats.UsagePercent)
+			metrics.MemoryAllocMB.Set(float64(stats.Alloc / 1024 / 1024))
+			metrics.MemoryLevel.Set(float64(memcontrol.MemoryCritical))
+		})
+
+		memController.RegisterCallback(memcontrol.MemoryEmergency, func(stats memcontrol.MemoryStats) {
+			logger.Log.Errorw("Memória em EMERGÊNCIA - pausando capturas temporariamente",
+				"usage_percent", fmt.Sprintf("%.2f%%", stats.UsagePercent),
+				"alloc_mb", stats.Alloc/1024/1024,
+				"heap_mb", stats.HeapAlloc/1024/1024)
+			metrics.MemoryUsagePercent.Set(stats.UsagePercent)
+			metrics.MemoryAllocMB.Set(float64(stats.Alloc / 1024 / 1024))
+			metrics.MemoryLevel.Set(float64(memcontrol.MemoryEmergency))
+		})
+
+		logger.Log.Infow("Memory Controller ativado",
+			"max_memory_mb", cfg.Memory.MaxMemoryMB,
+			"warning_percent", cfg.Memory.WarningPercent,
+			"critical_percent", cfg.Memory.CriticalPercent,
+			"emergency_percent", cfg.Memory.EmergencyPercent)
+	}
+
 	// Registra o serviço na API (se habilitado)
 	// Tenta registrar com retry automático a cada 1 minuto em caso de falha
 	registrationClient := registration.NewClient(cfg.Registration.APIURL, cfg.Registration.Enabled)
@@ -140,6 +198,84 @@ func main() {
 		metaPublisher = metadata.NewPublisher(nil, "", "", false)
 	}
 
+	// Cria o monitor de câmeras
+	cameraMonitor := camera.NewMonitor(ctx, 30*time.Second)
+	
+	// Configura callbacks para publicar eventos de status
+	if metaPublisher.Enabled() {
+		cameraMonitor.SetCallbacks(
+			// onAllInactive
+			func(cameraID string) {
+				allStatus := cameraMonitor.GetAllStatus()
+				inactiveCount := 0
+				for _, status := range allStatus {
+					if !status.IsActive {
+						inactiveCount++
+					}
+				}
+				
+				logger.Log.Errorw("ALERTA CRÍTICO: Nenhuma câmera ativa",
+					"total_cameras", len(allStatus),
+					"inactive_cameras", inactiveCount)
+				
+				err := metaPublisher.PublishSystemStatus(
+					len(allStatus),
+					0,
+					inactiveCount,
+					"ALERTA: Nenhuma câmera ativa detectada. Sistema em estado crítico.",
+				)
+				if err != nil {
+					logger.Log.Errorw("Erro ao publicar evento de sistema sem câmeras ativas",
+						"error", err)
+				}
+			},
+			// onCameraDown
+			func(cameraID string) {
+				status, exists := cameraMonitor.GetStatus(cameraID)
+				if !exists {
+					return
+				}
+				
+				logger.Log.Warnw("Câmera ficou inativa",
+					"camera_id", cameraID,
+					"consecutive_failures", status.ConsecutiveFailures)
+				
+				err := metaPublisher.PublishCameraStatus(
+					cameraID,
+					metadata.CameraStateInactive,
+					status.ConsecutiveFailures,
+					status.LastError,
+					"Câmera tornou-se inativa após múltiplas falhas",
+				)
+				if err != nil {
+					logger.Log.Errorw("Erro ao publicar evento de câmera inativa",
+						"camera_id", cameraID,
+						"error", err)
+				}
+			},
+			// onCameraUp
+			func(cameraID string) {
+				logger.Log.Infow("Câmera voltou a ficar ativa",
+					"camera_id", cameraID)
+				
+				err := metaPublisher.PublishCameraStatus(
+					cameraID,
+					metadata.CameraStateActive,
+					0,
+					nil,
+					"Câmera reconectada e operando normalmente",
+				)
+				if err != nil {
+					logger.Log.Errorw("Erro ao publicar evento de câmera ativa",
+						"camera_id", cameraID,
+						"error", err)
+				}
+			},
+		)
+	}
+	
+	cameraMonitor.Start()
+
 	var compressor *util.Compressor
 	if cfg.Compression.Enabled {
 		comp, err := util.NewCompressor(cfg.Compression.Level)
@@ -154,6 +290,9 @@ func main() {
 	go monitorSystem(workerPool)
 
 	for _, camCfg := range cfg.Cameras {
+		// Registra a câmera no monitor
+		cameraMonitor.RegisterCamera(camCfg.ID)
+		
 		frameBuffer := buffer.NewFrameBuffer(cameraBufferSize)
 
 		resetTimeout := time.Duration(cfg.Optimization.CircuitResetSec) * time.Second
@@ -181,6 +320,8 @@ func main() {
 			circuitBreaker,
 			cfg.Optimization.UsePersistent,
 			persistentBufferSize,
+			cameraMonitor,
+			memController,
 		)
 
 		capture.Start()
@@ -223,7 +364,13 @@ func monitorSystem(pool *worker.Pool) {
 		metrics.WorkerPoolQueueSize.WithLabelValues("main").Set(float64(stats.QueueSize))
 		metrics.WorkerPoolProcessing.WithLabelValues("main").Set(float64(stats.Processing))
 
+		var memStats runtime.MemStats
+		runtime.ReadMemStats(&memStats)
+
 		logger.Log.Infow("System stats",
-			"pool_stats", stats.String())
+			"pool_stats", stats.String(),
+			"memory_alloc_mb", memStats.Alloc/1024/1024,
+			"memory_sys_mb", memStats.Sys/1024/1024,
+			"num_goroutines", runtime.NumGoroutine())
 	}
 }

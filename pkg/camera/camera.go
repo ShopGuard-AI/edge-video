@@ -12,6 +12,7 @@ import (
 	"github.com/T3-Labs/edge-video/pkg/buffer"
 	"github.com/T3-Labs/edge-video/pkg/circuit"
 	"github.com/T3-Labs/edge-video/pkg/logger"
+	"github.com/T3-Labs/edge-video/pkg/memcontrol"
 	"github.com/T3-Labs/edge-video/pkg/metrics"
 	"github.com/T3-Labs/edge-video/pkg/mq"
 	"github.com/T3-Labs/edge-video/pkg/util"
@@ -40,6 +41,8 @@ type Capture struct {
 	circuitBreaker    *circuit.Breaker
 	persistentCapture *PersistentCapture
 	usePersistent     bool
+	monitor           *Monitor
+	memController     *memcontrol.Controller
 }
 
 func NewCapture(
@@ -55,6 +58,8 @@ func NewCapture(
 	circuitBreaker *circuit.Breaker,
 	usePersistent bool,
 	persistentBufferSize int,
+	monitor *Monitor,
+	memController *memcontrol.Controller,
 ) *Capture {
 	bufferCtx, bufferCancel := context.WithCancel(ctx)
 
@@ -72,6 +77,8 @@ func NewCapture(
 		frameBuffer:    frameBuffer,
 		circuitBreaker: circuitBreaker,
 		usePersistent:  usePersistent,
+		monitor:        monitor,
+		memController:  memController,
 	}
 
 	if usePersistent {
@@ -93,17 +100,28 @@ func (c *Capture) Start() {
 		if err != nil {
 			logger.Log.Errorw("Erro ao iniciar captura persistente, usando modo clássico",
 				"camera_id", c.config.ID,
-				"error", err)
+				"error", err,
+				"error_type", "connection_failed")
 			c.usePersistent = false
+			if c.monitor != nil {
+				c.monitor.RecordFailure(c.config.ID, err)
+			}
 		} else {
 			go c.persistentCaptureLoop()
 			metrics.CameraConnected.WithLabelValues(c.config.ID).Set(1)
+			if c.monitor != nil {
+				c.monitor.RecordSuccess(c.config.ID)
+			}
+			logger.Log.Infow("Captura persistente iniciada com sucesso",
+				"camera_id", c.config.ID)
 			return
 		}
 	}
 
 	go c.classicCaptureLoop()
 	metrics.CameraConnected.WithLabelValues(c.config.ID).Set(1)
+	logger.Log.Infow("Captura clássica iniciada",
+		"camera_id", c.config.ID)
 }
 
 func (c *Capture) bufferDispatcher() {
@@ -140,6 +158,8 @@ func (c *Capture) persistentCaptureLoop() {
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
+	consecutiveFailures := 0
+
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -152,12 +172,28 @@ func (c *Capture) persistentCaptureLoop() {
 		case <-ticker.C:
 			frame, ok := c.persistentCapture.GetFrameWithTimeout(c.interval / 2)
 			if !ok {
+				consecutiveFailures++
 				metrics.FramesDropped.WithLabelValues(c.config.ID, "no_frame_available").Inc()
+				
+				if consecutiveFailures >= 5 {
+					logger.Log.Warnw("Múltiplas falhas consecutivas ao obter frames",
+						"camera_id", c.config.ID,
+						"consecutive_failures", consecutiveFailures)
+					
+					if c.monitor != nil {
+						c.monitor.RecordFailure(c.config.ID, errors.New("sem frames disponíveis"))
+					}
+				}
 				continue
 			}
 
+			consecutiveFailures = 0
 			metrics.FrameSizeBytes.WithLabelValues(c.config.ID).Observe(float64(len(frame)))
 			c.enqueueFrame(frame, false)
+			
+			if c.monitor != nil {
+				c.monitor.RecordSuccess(c.config.ID)
+			}
 		}
 	}
 }
@@ -175,6 +211,29 @@ func (c *Capture) classicCaptureLoop() {
 			return
 
 		default:
+		}
+
+		// Verifica controle de memória
+		if c.memController != nil {
+			if c.memController.ShouldPause() {
+				delay := c.memController.GetThrottleDelay(c.config.ID)
+				logger.Log.Warnw("Captura pausada devido à memória crítica",
+					"camera_id", c.config.ID,
+					"pause_duration", delay,
+					"memory_level", c.memController.GetLevel())
+				metrics.CameraPaused.WithLabelValues(c.config.ID).Inc()
+				time.Sleep(delay)
+				continue
+			}
+
+			if c.memController.ShouldThrottle() {
+				delay := c.memController.GetThrottleDelay(c.config.ID)
+				logger.Log.Debugw("Captura com throttle por memória",
+					"camera_id", c.config.ID,
+					"throttle_delay", delay)
+				metrics.CameraThrottled.WithLabelValues(c.config.ID).Inc()
+				time.Sleep(delay)
+			}
 		}
 
 		start := time.Now()
@@ -196,14 +255,36 @@ func (c *Capture) captureAndPublish() {
 	})
 
 	if err != nil {
+		// Classifica o tipo de erro
+		errorType := "unknown"
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			errorType = "context_error"
+		} else if err.Error() == "circuit breaker "+c.config.ID+" aberto" {
+			errorType = "circuit_breaker_open"
+		} else if errors.New("frame vazio").Error() == err.Error() {
+			errorType = "empty_frame"
+		} else {
+			errorType = "connection_failed"
+		}
+		
 		logger.Log.Errorw("Erro na captura com circuit breaker",
 			"camera_id", c.config.ID,
-			"error", err)
-		metrics.FramesDropped.WithLabelValues(c.config.ID, "circuit_breaker_open").Inc()
+			"error", err,
+			"error_type", errorType,
+			"circuit_state", c.circuitBreaker.State().String())
+		metrics.FramesDropped.WithLabelValues(c.config.ID, errorType).Inc()
+		
+		if c.monitor != nil {
+			c.monitor.RecordFailure(c.config.ID, err)
+		}
 		return
 	}
 
 	metrics.CaptureLatency.WithLabelValues(c.config.ID).Observe(time.Since(start).Seconds())
+	
+	if c.monitor != nil {
+		c.monitor.RecordSuccess(c.config.ID)
+	}
 }
 
 func (c *Capture) doCapture() error {
@@ -225,17 +306,43 @@ func (c *Capture) doCapture() error {
 
 	err := cmd.Run()
 	if err != nil {
+		// Classifica o tipo de erro do FFmpeg
+		stderrStr := stderr.String()
+		errorContext := "unknown"
+		
+		if errors.Is(err, context.Canceled) {
+			errorContext = "context_canceled"
+		} else if errors.Is(err, context.DeadlineExceeded) {
+			errorContext = "timeout"
+		} else if len(stderrStr) > 0 {
+			if bytes.Contains([]byte(stderrStr), []byte("Connection refused")) {
+				errorContext = "connection_refused"
+			} else if bytes.Contains([]byte(stderrStr), []byte("Connection timed out")) {
+				errorContext = "connection_timeout"
+			} else if bytes.Contains([]byte(stderrStr), []byte("401 Unauthorized")) {
+				errorContext = "auth_failed"
+			} else if bytes.Contains([]byte(stderrStr), []byte("404 Not Found")) {
+				errorContext = "stream_not_found"
+			} else {
+				errorContext = "ffmpeg_error"
+			}
+		}
+		
 		logger.Log.Errorw("Erro ao capturar frame",
 			"camera_id", c.config.ID,
 			"error", err,
-			"stderr", stderr.String())
+			"error_context", errorContext,
+			"stderr", stderrStr)
+		
+		metrics.CameraReconnectAttempts.WithLabelValues(c.config.ID).Inc()
 		return err
 	}
 
 	frameData := stdout.Bytes()
 	if len(frameData) == 0 {
 		logger.Log.Warnw("Frame vazio capturado",
-			"camera_id", c.config.ID)
+			"camera_id", c.config.ID,
+			"stderr", stderr.String())
 		return errors.New("frame vazio")
 	}
 

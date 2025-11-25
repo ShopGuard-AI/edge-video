@@ -63,6 +63,16 @@ type RegistrationConfig struct {
 	APIURL  string `mapstructure:"api_url"`
 }
 
+type MemoryConfig struct {
+	Enabled          bool    `mapstructure:"enabled"`
+	MaxMemoryMB      uint64  `mapstructure:"max_memory_mb"`
+	WarningPercent   float64 `mapstructure:"warning_percent"`
+	CriticalPercent  float64 `mapstructure:"critical_percent"`
+	EmergencyPercent float64 `mapstructure:"emergency_percent"`
+	CheckInterval    int     `mapstructure:"check_interval_seconds"`
+	GCTriggerPercent float64 `mapstructure:"gc_trigger_percent"`
+}
+
 type Config struct {
 	TargetFPS           float64            `mapstructure:"target_fps"`
 	Protocol            string             `mapstructure:"protocol"`
@@ -74,6 +84,7 @@ type Config struct {
 	Registration        RegistrationConfig `mapstructure:"registration"`
 	Compression         Compression        `mapstructure:"compression"`
 	Optimization        Optimization       `mapstructure:"optimization"`
+	Memory              MemoryConfig       `mapstructure:"memory"`
 	Cameras             []CameraConfig     `mapstructure:"cameras"`
 }
 

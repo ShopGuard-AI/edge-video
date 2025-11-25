@@ -96,4 +96,27 @@ var (
 		},
 		[]string{"camera_id"},
 	)
+	
+	LastSuccessfulCapture = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "edge_video_last_successful_capture_timestamp",
+			Help: "Timestamp Unix da última captura bem-sucedida",
+		},
+		[]string{"camera_id"},
+	)
+	
+	CameraReconnectAttempts = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "edge_video_camera_reconnect_attempts_total",
+			Help: "Total de tentativas de reconexão por câmera",
+		},
+		[]string{"camera_id"},
+	)
+	
+	ActiveCamerasCount = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "edge_video_active_cameras_total",
+			Help: "Número total de câmeras atualmente ativas",
+		},
+	)
 )
