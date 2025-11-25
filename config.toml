@@ -8,9 +8,9 @@ protocol = "amqp"
 
 # Configuração AMQP (RabbitMQ)
 [amqp]
-amqp_url = "amqp://sonda_supermercados_1:lOYmsoBE5s33npUBbcdWV8pHGI57Wp0jApzLwbvoJ78@34.71.212.239:5672/sonda_supermercados_1"
-vhost =  "sonda_supermercados_1"
-exchange = "sonda_supermercados_1_exchange"
+amqp_url = ""
+vhost =  ""
+exchange = ""
 routing_key_prefix = "camera."
 
 # Configuração MQTT
@@ -34,7 +34,7 @@ circuit_reset_seconds = 60          # Tempo para tentar reconectar (segundos)
 # Configuração Redis (armazenamento de frames)
 [redis]
 enabled = true
-address = "127.0.0.1:6380"
+address = ""
 ttl_seconds = 30
 prefix = "frames"
 
@@ -49,25 +49,13 @@ routing_key = "camera.metadata.event"
 # Em caso de falha, tenta novamente a cada 1 minuto
 [registration]
 enabled = true
-api_url = "http://localhost:8000/camera"
+api_url = ""
 
 # Câmeras RTSP
 [[cameras]]
-id = "cam1"
-url = "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=1&subtype=0"
+id = ""
+url = ""
 
 [[cameras]]
-id = "cam2"
-url = "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=2&subtype=0"
-
-[[cameras]]
-id = "cam3"
-url = "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=3&subtype=0"
-
-[[cameras]]
-id = "cam4"
-url = "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=4&subtype=0"
-
-[[cameras]]
-id = "cam5"
-url = "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=5&subtype=0"
+id = ""
+url = ""
