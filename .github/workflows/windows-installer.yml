@@ -84,7 +84,7 @@ jobs:
     - name: Copy configuration files
       run: |
         New-Item -ItemType Directory -Force -Path dist/
-        Copy-Item config.toml dist/config.toml
+        Copy-Item configs/config.example.toml dist/config.toml
         Copy-Item -Path "docs/windows" -Destination "dist/" -Recurse -ErrorAction SilentlyContinue
       shell: pwsh
 

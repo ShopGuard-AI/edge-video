@@ -1016,3 +1016,30 @@ FodyWeavers.xsd
 # Additional files built by Visual Studio
 
 # End of https://www.toptal.com/developers/gitignore/api/go,vs,visualstudio,pycharm,pycharm+iml,pycharm+all,goland,goland+all,goland+iml
+# === Refactoring: Additional ignores ===
+
+# Built binaries
+edge-video
+edge-video-test
+edge-video-service
+edge-video-service.exe
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*.swo
+*~
+
+# Build artifacts
+dist/
+build/
+bin/
+
+# XML output files
+repomix-output.xml
+*.xml.bak
+
+# Test artifacts
+*.test
+coverage.*

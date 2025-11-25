@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  camera-collector:
+    image: ghcr.io/t3-labs/edge-video:latest
+    restart: unless-stopped
+    network_mode: "host"
+    volumes:
+      # Monta o config.toml (pode ser customizado via variável de ambiente)
+      - ${CONFIG_PATH:-./config.toml}:/app/config.toml
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  portainer_data:
+    driver: local

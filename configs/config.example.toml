@@ -1,0 +1,61 @@
+# Configuração do Edge Video - Formato TOML
+
+# FPS desejado para captura (frames por segundo)
+target_fps = 30
+
+# Protocolo de mensageria: "amqp" ou "mqtt"
+protocol = "amqp"
+
+# Configuração AMQP (RabbitMQ)
+[amqp]
+amqp_url = ""
+vhost =  ""
+exchange = ""
+routing_key_prefix = "camera."
+
+# Configuração MQTT
+[mqtt]
+broker = "tcp://localhost:1883"
+topic_prefix = "camera/"
+
+# Configurações de otimização de performance
+[optimization]
+max_workers = 20                    # Número de workers para processar frames
+worker_queue_size = 200             # Tamanho da fila de jobs do worker pool
+camera_buffer_size = 200            # Tamanho do buffer de frames por câmera
+persistent_buffer_size = 100        # Tamanho do buffer interno da captura persistente
+buffer_size = 200                   # Compatibilidade com versões antigas
+frame_quality = 5                   # Qualidade JPEG (2-31, menor = melhor)
+frame_resolution = "1280x720"       # Resolução dos frames
+use_persistent = true               # Usar captura persistente FFmpeg
+circuit_max_failures = 5            # Falhas antes de abrir circuit breaker
+circuit_reset_seconds = 60          # Tempo para tentar reconectar (segundos)
+
+# Configuração Redis (armazenamento de frames)
+[redis]
+enabled = true
+address = ""
+ttl_seconds = 30
+prefix = "frames"
+
+# Configuração de Metadados (publicação de metadados de frames)
+[metadata]
+enabled = true
+exchange = "camera.metadata"
+routing_key = "camera.metadata.event"
+
+# Configuração de Registro na API
+# Envia dados do sistema para uma API ao iniciar
+# Em caso de falha, tenta novamente a cada 1 minuto
+[registration]
+enabled = true
+api_url = ""
+
+# Câmeras RTSP
+[[cameras]]
+id = ""
+url = ""
+
+[[cameras]]
+id = ""
+url = ""
