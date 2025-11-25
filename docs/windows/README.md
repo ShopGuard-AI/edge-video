@@ -191,3 +191,40 @@ circuit_max_failures = 3     # Faster failure detection
 - GitHub Issues: https://github.com/T3-Labs/edge-video/issues
 - Documentation: https://github.com/T3-Labs/edge-video/docs
 - Configuration Examples: https://github.com/T3-Labs/edge-video/examples
+
+## Uso Prático do Executável no Windows
+
+### Instalação
+- Baixe o instalador `EdgeVideoSetup-X.X.X.exe` no [GitHub Releases](https://github.com/T3-Labs/edge-video/releases).
+- Execute como Administrador e siga o assistente de instalação.
+- O serviço será instalado e iniciado automaticamente.
+
+### Configuração
+- Edite as câmeras e parâmetros em `C:\Program Files\T3Labs\EdgeVideo\config\config.toml`.
+
+### Gerenciamento do Serviço
+- Pelo Services.msc (Interface Gráfica):
+  - Win + R → services.msc → "Edge Video Camera Capture Service"
+- Pela linha de comando:
+  ```cmd
+  # Instalar serviço manualmente
+  edge-video-service.exe install
+
+  # Iniciar serviço
+  net start EdgeVideoService
+  # ou
+  edge-video-service.exe start
+
+  # Parar serviço
+  net stop EdgeVideoService
+  # ou
+  edge-video-service.exe stop
+
+  # Desinstalar serviço
+  edge-video-service.exe uninstall
+  ```
+- Para troubleshooting, rode em modo console:
+  ```cmd
+  edge-video-service.exe console
+  ```
+- Logs podem ser visualizados em `C:\Program Files\T3Labs\EdgeVideo\logs\` ou pelo Event Viewer (Application → EdgeVideoService).
