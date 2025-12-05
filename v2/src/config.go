@@ -9,11 +9,12 @@ import (
 
 // Config representa a configuração do sistema
 type Config struct {
-	FPS            int                      `yaml:"fps"`
-	Quality        int                      `yaml:"quality"`
-	AMQP           AMQPConfig               `yaml:"amqp"`
-	CircuitBreaker CircuitBreakerConfig     `yaml:"circuit_breaker"`
-	Cameras        []CamConfig              `yaml:"cameras"`
+	FPS              int                      `yaml:"fps"`
+	Quality          int                      `yaml:"quality"`
+	AMQP             AMQPConfig               `yaml:"amqp"`
+	CircuitBreaker   CircuitBreakerConfig     `yaml:"circuit_breaker"`
+	MemoryController MemoryControllerConfig   `yaml:"memory_controller"`
+	Cameras          []CamConfig              `yaml:"cameras"`
 }
 
 // AMQPConfig configuração do RabbitMQ
@@ -62,5 +63,30 @@ func LoadConfig(filename string) (*Config, error) {
 		config.CircuitBreaker = DefaultCircuitBreakerConfig()
 	}
 
+	// Se memory_controller não configurado, usa defaults (disabled)
+	if config.MemoryController.MaxMemoryMB == 0 {
+		config.MemoryController = DefaultMemoryControllerConfig()
+	}
+
+	// Valida memory_controller se habilitado
+	if config.MemoryController.Enabled {
+		if err := ValidateMemoryControllerConfig(config.MemoryController); err != nil {
+			return nil, fmt.Errorf("erro na configuração de memory_controller: %w", err)
+		}
+	}
+
 	return &config, nil
+}
+
+// DefaultMemoryControllerConfig retorna configuração padrão para memory controller
+func DefaultMemoryControllerConfig() MemoryControllerConfig {
+	return MemoryControllerConfig{
+		Enabled:          false, // Disabled por padrão
+		MaxMemoryMB:      2048,
+		WarningPercent:   60.0,
+		CriticalPercent:  75.0,
+		EmergencyPercent: 85.0,
+		CheckInterval:    5000000000, // 5s em nanoseconds
+		GCTriggerPercent: 70.0,
+	}
 }

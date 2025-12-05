@@ -17,6 +17,17 @@ circuit_breaker:
   max_backoff: 5m              # Backoff máximo (5 minutos)
   backoff_multiplier: 2.0      # Multiplicador do backoff (5s → 10s → 20s → ...)
 
+# Memory Controller (gestão automática de memória)
+# Se habilitado, monitora uso de RAM e dispara GC quando necessário
+memory_controller:
+  enabled: true                # Habilita memory controller (true/false)
+  max_memory_mb: 2048          # Limite máximo de memória (MB) - ajuste conforme seu sistema
+  warning_percent: 60.0        # Nível WARNING (60% do max) - começa throttling leve
+  critical_percent: 75.0       # Nível CRITICAL (75% do max) - throttling médio
+  emergency_percent: 85.0      # Nível EMERGENCY (85% do max) - throttling agressivo
+  check_interval: 5s           # Intervalo de verificação de memória
+  gc_trigger_percent: 70.0     # Dispara GC quando atingir esse percentual
+
 # Câmeras com configuração INDIVIDUAL de exchange e routing_key
 cameras:
   # Mercado Autônomo (RTMP)

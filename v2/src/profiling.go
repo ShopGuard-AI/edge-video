@@ -40,6 +40,10 @@ type ProfileStats struct {
 	ramUsedMB     atomic.Uint64
 	ramTotalMB    atomic.Uint64
 	ramPercentage atomic.Uint64 // Multiplicado por 100
+
+	// Memory Controller
+	memoryControllerLevel atomic.Int32 // 0=Normal, 1=Warning, 2=Critical, 3=Emergency
+	memoryControllerGCCount atomic.Uint32
 }
 
 var globalProfile ProfileStats
@@ -66,6 +70,12 @@ func TrackPublish(duration time.Duration) {
 // TrackCircuitBreaker rastreia estado do circuit breaker
 func TrackCircuitBreaker(openCount uint32) {
 	globalProfile.circuitBreakerOpen.Store(openCount)
+}
+
+// TrackMemoryController rastreia estado do memory controller
+func TrackMemoryController(level MemoryLevel, gcCount uint32) {
+	globalProfile.memoryControllerLevel.Store(int32(level))
+	globalProfile.memoryControllerGCCount.Store(gcCount)
 }
 
 // UpdateMemoryStats atualiza stats de memória
@@ -180,6 +190,15 @@ func PrintProfileReport() {
 	cbOpen := globalProfile.circuitBreakerOpen.Load()
 	if cbOpen > 0 {
 		log.Printf("🔴 Circuit Breakers OPEN: %d", cbOpen)
+	}
+
+	// Memory Controller stats
+	memLevel := MemoryLevel(globalProfile.memoryControllerLevel.Load())
+	memGCCount := globalProfile.memoryControllerGCCount.Load()
+	if memGCCount > 0 {
+		log.Printf("🧠 Memory Controller:")
+		log.Printf("   Level:     %s", memLevel)
+		log.Printf("   Manual GC: %d", memGCCount)
 	}
 
 	log.Println(sep + "\n")

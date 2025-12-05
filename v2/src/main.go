@@ -86,12 +86,49 @@ func main() {
 	InitSystemStats() // Inicializa tracking de CPU/RAM
 	StartProfileMonitor()
 
+	// Inicializa Memory Controller (se habilitado)
+	var memController *MemoryController
+	if config.MemoryController.Enabled {
+		log.Printf("Memory Controller HABILITADO (max: %d MB)", config.MemoryController.MaxMemoryMB)
+		memController = NewMemoryController(config.MemoryController)
+
+		// Registra callback para tracking
+		memController.RegisterCallback(MemoryWarning, func(stats MemoryStats) {
+			log.Printf("⚠️  Memory WARNING: %.1f%% (%d MB / %d MB)",
+				stats.UsagePercent, stats.AllocMB, config.MemoryController.MaxMemoryMB)
+		})
+		memController.RegisterCallback(MemoryCritical, func(stats MemoryStats) {
+			log.Printf("🔴 Memory CRITICAL: %.1f%% (%d MB / %d MB)",
+				stats.UsagePercent, stats.AllocMB, config.MemoryController.MaxMemoryMB)
+		})
+		memController.RegisterCallback(MemoryEmergency, func(stats MemoryStats) {
+			log.Printf("💀 Memory EMERGENCY: %.1f%% (%d MB / %d MB)",
+				stats.UsagePercent, stats.AllocMB, config.MemoryController.MaxMemoryMB)
+		})
+
+		memController.Start()
+		defer memController.Stop()
+
+		// Goroutine para atualizar stats de memory controller no profiling
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+
+			for range ticker.C {
+				stats := memController.GetStats()
+				TrackMemoryController(stats.Level, stats.NumGC)
+			}
+		}()
+	} else {
+		log.Println("Memory Controller DESABILITADO (pode ser habilitado no config.yaml)")
+	}
+
 	// Aguarda sinal de término
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	log.Println("\n✓ Sistema iniciado com sucesso!")
-	log.Println("✓ Capturando frames... (Ctrl+C para parar)\n")
+	log.Println("✓ Capturando frames... (Ctrl+C para parar)")
 
 	<-sigChan
 
