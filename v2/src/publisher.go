@@ -11,11 +11,12 @@ import (
 
 // Publisher gerencia publicação no RabbitMQ com auto-reconnect
 type Publisher struct {
-	amqpURL    string
-	conn       *amqp.Connection
-	channel    *amqp.Channel
-	exchange   string
-	routingKey string // Routing key COMPLETA (não é mais prefixo)
+	amqpURL       string
+	conn          *amqp.Connection
+	channel       *amqp.Channel
+	exchange      string
+	routingKey    string // Routing key COMPLETA (não é mais prefixo)
+	prefetchCount int    // QoS: limite de frames não-confirmados (0 = ilimitado)
 
 	mu            sync.Mutex
 	publishMu     sync.Mutex // Mutex DEDICADO para serializar publicações (channel.Publish não é thread-safe!)
@@ -24,17 +25,23 @@ type Publisher struct {
 	reconnecting  bool
 	connected     bool
 
+	// Publisher Confirms (rastreamento de entregas)
+	confirmsChan  chan amqp.Confirmation
+	confirmsCount uint64 // Total de confirms recebidos (ACK)
+	nacksCount    uint64 // Total de NACKs recebidos (rejeições)
+
 	notifyClose chan *amqp.Error
 	done        chan struct{}
 }
 
 // NewPublisher cria um novo publisher com auto-reconnect
-func NewPublisher(amqpURL, exchange, routingKey string) (*Publisher, error) {
+func NewPublisher(amqpURL, exchange, routingKey string, prefetchCount int) (*Publisher, error) {
 	p := &Publisher{
-		amqpURL:    amqpURL,
-		exchange:   exchange,
-		routingKey: routingKey, // Usa routing_key completa
-		done:       make(chan struct{}),
+		amqpURL:       amqpURL,
+		exchange:      exchange,
+		routingKey:    routingKey,    // Usa routing_key completa
+		prefetchCount: prefetchCount, // QoS configurável
+		done:          make(chan struct{}),
 	}
 
 	// Conecta inicialmente com retry
@@ -110,11 +117,75 @@ func (p *Publisher) connect() error {
 		return fmt.Errorf("falha ao declarar exchange: %w", err)
 	}
 
+	// CONFIGURA QoS (Quality of Service)
+	// Limita quantos frames não-confirmados podem estar em trânsito
+	// Isso previne:
+	// - Consumer overflow (consumer recebe milhares de frames de uma vez)
+	// - Memory overflow no consumer
+	// - Processamento em lote que causa latência
+	err = p.channel.Qos(
+		p.prefetchCount, // prefetchCount: configurável via config.yaml (0 = ilimitado)
+		0,               // prefetchSize: sem limite de bytes (0 = ilimitado)
+		false,           // global: false = aplica apenas a este channel
+	)
+	if err != nil {
+		p.channel.Close()
+		p.conn.Close()
+		return fmt.Errorf("falha ao configurar QoS: %w", err)
+	}
+
+	// HABILITA PUBLISHER CONFIRMS
+	// Isso faz o RabbitMQ enviar confirmações (ACK/NACK) para cada mensagem publicada
+	err = p.channel.Confirm(false)
+	if err != nil {
+		p.channel.Close()
+		p.conn.Close()
+		return fmt.Errorf("falha ao habilitar publisher confirms: %w", err)
+	}
+
+	// Canal para receber confirmações
+	p.confirmsChan = p.channel.NotifyPublish(make(chan amqp.Confirmation, 1000))
+
+	// Inicia goroutine para processar confirmações
+	go p.handleConfirms()
+
 	// Monitora fechamento de conexão
 	p.notifyClose = make(chan *amqp.Error)
 	p.conn.NotifyClose(p.notifyClose)
 
+	log.Printf("✓ QoS configurado: prefetch=%d | Publisher Confirms habilitado para exchange: %s", p.prefetchCount, p.exchange)
+
 	return nil
+}
+
+// handleConfirms processa confirmações (ACK/NACK) do RabbitMQ
+func (p *Publisher) handleConfirms() {
+	for {
+		select {
+		case <-p.done:
+			return
+
+		case confirm, ok := <-p.confirmsChan:
+			if !ok {
+				// Canal fechado (reconexão em andamento)
+				return
+			}
+
+			p.mu.Lock()
+			if confirm.Ack {
+				// ACK: Frame entregue com sucesso ao RabbitMQ
+				p.confirmsCount++
+			} else {
+				// NACK: Frame rejeitado pelo RabbitMQ
+				p.nacksCount++
+				log.Printf("⚠️  NACK recebido! Frame rejeitado pelo RabbitMQ (delivery tag: %d)", confirm.DeliveryTag)
+			}
+			p.mu.Unlock()
+
+			// Tracking para profiling
+			TrackPublishConfirm(confirm.Ack)
+		}
+	}
 }
 
 // monitorConnection monitora e reconecta automaticamente
@@ -294,4 +365,11 @@ func (p *Publisher) IsConnected() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.connected
+}
+
+// ConfirmStats retorna estatísticas de confirmações
+func (p *Publisher) ConfirmStats() (acks uint64, nacks uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.confirmsCount, p.nacksCount
 }

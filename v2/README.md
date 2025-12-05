@@ -17,6 +17,8 @@ Versão **completamente reescrita** com foco em **simplicidade, confiabilidade e
 - ✅ **Circuit Breaker**: Proteção contra falhas de câmera com backoff exponencial
 - ✅ **System Metrics**: Monitoramento de CPU e RAM (processo + sistema)
 - ✅ **Profiling System**: Métricas detalhadas de performance
+- ✅ **Publisher Confirms**: Rastreamento de ACK/NACK do RabbitMQ (100% visibilidade)
+- ✅ **QoS (Quality of Service)**: Controle de prefetch configurável para estabilidade
 - ✅ **Enterprise Reporting**: Estatísticas completas no shutdown
 
 ---
@@ -36,6 +38,8 @@ Versão **completamente reescrita** com foco em **simplicidade, confiabilidade e
 | **Circuit Breaker** | ❌ | ✅ |
 | **System Metrics** | ❌ | ✅ (CPU/RAM) |
 | **Profiling** | ❌ | ✅ |
+| **Publisher Confirms** | ❌ | ✅ (ACK/NACK) |
+| **QoS Control** | ❌ | ✅ (configurável) |
 | **Shutdown Report** | ❌ | ✅ |
 
 ---
@@ -218,6 +222,7 @@ amqp:
   url: "amqp://user:pass@host:5672/vhost"
   exchange: "your.exchange"
   routing_key_prefix: "your.prefix."
+  prefetch_count: 50  # QoS: máximo de frames não-confirmados por consumer (0 = ilimitado)
 
 # Circuit Breaker (proteção contra falhas de câmera)
 circuit_breaker:

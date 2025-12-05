@@ -56,7 +56,8 @@ func main() {
 		publisher, err := NewPublisher(
 			config.AMQP.URL,
 			exchange,
-			routingKey, // Passa routing_key COMPLETA ao invés de prefixo
+			routingKey,                 // Passa routing_key COMPLETA ao invés de prefixo
+			config.AMQP.PrefetchCount, // QoS: prefetch_count configurável via YAML
 		)
 		if err != nil {
 			log.Fatalf("ERRO ao criar publisher para %s: %v", camCfg.ID, err)
@@ -234,6 +235,27 @@ func printFinalReport(cameras []*CameraStream, publisher *Publisher, targetFPS i
 	log.Println("📤 PUBLISHER (RabbitMQ)")
 	log.Printf("   Total Publicado:  %d frames", pubCount)
 	log.Printf("   Erros:            %d (%.2f%%)", pubErrors, errorRate)
+
+	// Publisher Confirms
+	acks, nacks := publisher.ConfirmStats()
+	totalConfirms := acks + nacks
+	if totalConfirms > 0 {
+		confirmRate := float64(acks) / float64(totalConfirms) * 100
+		log.Printf("   Confirms (ACK):   %d (%.2f%%)", acks, confirmRate)
+		log.Printf("   Rejeições (NACK): %d (%.2f%%)", nacks, 100-confirmRate)
+
+		// Análise de perda
+		if totalConfirms < pubCount {
+			pending := pubCount - totalConfirms
+			log.Printf("   ⏳ Pendentes:     %d frames", pending)
+		}
+		if nacks > 0 {
+			log.Printf("   ⚠️  ALERTA: %d frames foram REJEITADOS pelo RabbitMQ!", nacks)
+		}
+		if acks == pubCount && nacks == 0 {
+			log.Printf("   ✅ 100%% dos frames CONFIRMADOS pelo RabbitMQ!")
+		}
+	}
 
 	// Throughput
 	if uptime.Seconds() > 0 {

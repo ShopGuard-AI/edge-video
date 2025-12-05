@@ -22,6 +22,7 @@ type AMQPConfig struct {
 	URL              string `yaml:"url"`
 	Exchange         string `yaml:"exchange"`
 	RoutingKeyPrefix string `yaml:"routing_key_prefix"`
+	PrefetchCount    int    `yaml:"prefetch_count"` // QoS: limite de frames não-confirmados (0 = ilimitado)
 }
 
 // CamConfig configuração de câmera
@@ -56,6 +57,11 @@ func LoadConfig(filename string) (*Config, error) {
 
 	if len(config.Cameras) == 0 {
 		return nil, fmt.Errorf("nenhuma câmera configurada")
+	}
+
+	// Se prefetch_count não configurado, usa default de 50
+	if config.AMQP.PrefetchCount == 0 {
+		config.AMQP.PrefetchCount = 50
 	}
 
 	// Se circuit_breaker não configurado, usa defaults

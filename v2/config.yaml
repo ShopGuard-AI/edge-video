@@ -5,6 +5,7 @@ quality: 5
 # Configuração AMQP global (usada como fallback)
 amqp:
   url: "amqp://supercarlao_rj_mercado:vTUaGG9S0Kbl_1AhqPxudML1jCYHRq0efkRDA6p_lgM@34.71.212.239:5672/supercarlao_rj_mercado"
+  prefetch_count: 50  # QoS: máximo de frames não-confirmados por consumer (0 = ilimitado)
 
 # Circuit Breaker (proteção contra falhas de câmera)
 # Se habilitado, câmeras que falham muito entram em backoff exponencial

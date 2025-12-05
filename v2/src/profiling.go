@@ -44,6 +44,10 @@ type ProfileStats struct {
 	// Memory Controller
 	memoryControllerLevel atomic.Int32 // 0=Normal, 1=Warning, 2=Critical, 3=Emergency
 	memoryControllerGCCount atomic.Uint32
+
+	// Publisher Confirms
+	publishConfirmsAck  atomic.Uint64 // Total de ACKs recebidos
+	publishConfirmsNack atomic.Uint64 // Total de NACKs recebidos
 }
 
 var globalProfile ProfileStats
@@ -76,6 +80,15 @@ func TrackCircuitBreaker(openCount uint32) {
 func TrackMemoryController(level MemoryLevel, gcCount uint32) {
 	globalProfile.memoryControllerLevel.Store(int32(level))
 	globalProfile.memoryControllerGCCount.Store(gcCount)
+}
+
+// TrackPublishConfirm rastreia confirmações do RabbitMQ (ACK/NACK)
+func TrackPublishConfirm(ack bool) {
+	if ack {
+		globalProfile.publishConfirmsAck.Add(1)
+	} else {
+		globalProfile.publishConfirmsNack.Add(1)
+	}
 }
 
 // UpdateMemoryStats atualiza stats de memória
@@ -157,7 +170,29 @@ func PrintProfileReport() {
 		log.Printf("📤 Publishing:")
 		log.Printf("   Avg Time:  %v", avgPublish)
 		log.Printf("   Count:     %d", publishes)
-		log.Printf("   ⚠️  GARGALO DETECTADO: Latência de %v é MUITO alta!", avgPublish)
+
+		// Publisher Confirms stats
+		acks := globalProfile.publishConfirmsAck.Load()
+		nacks := globalProfile.publishConfirmsNack.Load()
+		total := acks + nacks
+
+		if total > 0 {
+			ackRate := float64(acks) / float64(total) * 100
+			log.Printf("   Confirms:  %d ACKs, %d NACKs (%.1f%% sucesso)", acks, nacks, ackRate)
+
+			// Detecta problemas
+			if nacks > 0 {
+				log.Printf("   ⚠️  %d frames REJEITADOS pelo RabbitMQ!", nacks)
+			}
+			if total < publishes {
+				pending := publishes - total
+				log.Printf("   ⏳  %d confirms pendentes", pending)
+			}
+		}
+
+		if avgPublish > 50*time.Millisecond {
+			log.Printf("   ⚠️  GARGALO: Latência de %v é alta!", avgPublish)
+		}
 	}
 
 	// Memory stats
