@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -33,6 +35,15 @@ func main() {
 
 	log.Printf("Configuração carregada: %d câmeras, %d FPS, Quality %d",
 		len(config.Cameras), config.FPS, config.Quality)
+
+	// Inicia pprof HTTP server para debugging de goroutines
+	go func() {
+		log.Println("🔬 pprof server rodando em http://localhost:6060/debug/pprof/")
+		log.Println("   Para ver goroutines: http://localhost:6060/debug/pprof/goroutine?debug=1")
+		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+			log.Printf("⚠️  pprof server falhou: %v", err)
+		}
+	}()
 
 	// Cria e inicia câmeras usando FFmpeg stream
 	// CRÍTICO: Cada câmera tem seu PRÓPRIO publisher para evitar race conditions!

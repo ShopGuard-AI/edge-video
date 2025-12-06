@@ -26,9 +26,10 @@ type Publisher struct {
 	connected     bool
 
 	// Publisher Confirms (rastreamento de entregas)
-	confirmsChan  chan amqp.Confirmation
-	confirmsCount uint64 // Total de confirms recebidos (ACK)
-	nacksCount    uint64 // Total de NACKs recebidos (rejeições)
+	confirmsChan     chan amqp.Confirmation
+	confirmsCount    uint64 // Total de confirms recebidos (ACK)
+	nacksCount       uint64 // Total de NACKs recebidos (rejeições)
+	confirmsDone     chan struct{} // Canal para sinalizar fim do handleConfirms (evita goroutine leak)
 
 	notifyClose chan *amqp.Error
 	done        chan struct{}
@@ -88,6 +89,14 @@ func (p *Publisher) connectWithRetry(maxRetries int, initialDelay time.Duration)
 func (p *Publisher) connect() error {
 	var err error
 
+	// CRITICAL FIX: Para o goroutine handleConfirms anterior ANTES de criar um novo
+	// Isso previne goroutine leak durante reconexões
+	if p.confirmsDone != nil {
+		close(p.confirmsDone)  // Sinaliza para o goroutine anterior parar
+		p.confirmsDone = nil   // Limpa referência
+		time.Sleep(10 * time.Millisecond)  // Aguarda goroutine anterior encerrar
+	}
+
 	// Conecta
 	p.conn, err = amqp.Dial(p.amqpURL)
 	if err != nil {
@@ -146,6 +155,9 @@ func (p *Publisher) connect() error {
 	// Canal para receber confirmações
 	p.confirmsChan = p.channel.NotifyPublish(make(chan amqp.Confirmation, 1000))
 
+	// Cria novo canal de controle para este goroutine
+	p.confirmsDone = make(chan struct{})
+
 	// Inicia goroutine para processar confirmações
 	go p.handleConfirms()
 
@@ -163,6 +175,11 @@ func (p *Publisher) handleConfirms() {
 	for {
 		select {
 		case <-p.done:
+			// Publisher.Close() foi chamado
+			return
+
+		case <-p.confirmsDone:
+			// Reconexão em andamento - para este goroutine para evitar leak
 			return
 
 		case confirm, ok := <-p.confirmsChan:
