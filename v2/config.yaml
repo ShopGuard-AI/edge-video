@@ -5,7 +5,9 @@ quality: 5
 # Configuração AMQP global (usada como fallback)
 amqp:
   url: "amqp://supercarlao_rj_mercado:vTUaGG9S0Kbl_1AhqPxudML1jCYHRq0efkRDA6p_lgM@34.71.212.239:5672/supercarlao_rj_mercado"
-  prefetch_count: 50  # QoS: máximo de frames não-confirmados por consumer (0 = ilimitado)
+  prefetch_count: 50           # QoS: máximo de frames não-confirmados por consumer (0 = ilimitado)
+  publisher_confirms: false    # Habilita Publisher Confirms (DESABILITAR se não houver consumer!)
+
 
 # Circuit Breaker (proteção contra falhas de câmera)
 # Se habilitado, câmeras que falham muito entram em backoff exponencial
@@ -28,6 +30,26 @@ memory_controller:
   emergency_percent: 85.0      # Nível EMERGENCY (85% do max) - throttling agressivo
   check_interval: 5s           # Intervalo de verificação de memória
   gc_trigger_percent: 70.0     # Dispara GC quando atingir esse percentual
+
+# Redis (armazenamento de frames JPEG)
+# Se habilitado, frames vão pro Redis e só metadata vai pro RabbitMQ
+redis:
+  enabled: true                          # Habilita Redis storage (true/false)
+  address: "34.30.59.236:6379"           # Endereço do Redis (remoto)
+  password: "MinhaSenhaMuitoForte@2024"  # Senha do Redis
+  db: 0                                  # Database number (0-15)
+  vhost: "supercarlao_rj_mercado"        # VHost do RabbitMQ (primeiro trecho da chave)
+  prefix: "frames"                       # Prefixo das chaves (ex: frames:cam1:timestamp)
+  ttl: 120s                              # TTL dos frames (2 minutos)
+  max_retries: 3                         # Tentativas em caso de falha
+  retry_delay: 100ms                     # Delay entre tentativas
+
+# Metadata Publisher (publicação de metadados no RabbitMQ)
+# Quando Redis habilitado: publica metadata JSON com redis_key
+# Quando Redis desabilitado: publica frame binário direto (modo atual)
+metadata:
+  enabled: false               # Publica metadados JSON separados (true/false)
+  include_redis_key: true      # Incluir redis_key nos metadados (se redis enabled)
 
 # Câmeras com configuração INDIVIDUAL de exchange e routing_key
 cameras:

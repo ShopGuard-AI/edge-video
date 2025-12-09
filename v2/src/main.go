@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -36,6 +37,21 @@ func main() {
 	log.Printf("Configuração carregada: %d câmeras, %d FPS, Quality %d",
 		len(config.Cameras), config.FPS, config.Quality)
 
+	// Inicia Prometheus metrics server
+	metricsServer := InitMetricsServer(2112) // Porta padrão Prometheus
+
+	// Inicializa Redis client (se habilitado)
+	redisClient, err := NewRedisClient(config.Redis)
+	if err != nil {
+		log.Fatalf("ERRO ao conectar Redis: %v", err)
+	}
+	if redisClient != nil {
+		defer redisClient.Close()
+		log.Println("✓ Redis habilitado - frames serão armazenados no Redis")
+	} else {
+		log.Println("✓ Redis desabilitado - frames vão direto pro RabbitMQ")
+	}
+
 	// Inicia pprof HTTP server para debugging de goroutines
 	go func() {
 		log.Println("🔬 pprof server rodando em http://localhost:6060/debug/pprof/")
@@ -67,14 +83,19 @@ func main() {
 		publisher, err := NewPublisher(
 			config.AMQP.URL,
 			exchange,
-			routingKey,                 // Passa routing_key COMPLETA ao invés de prefixo
-			config.AMQP.PrefetchCount, // QoS: prefetch_count configurável via YAML
+			routingKey,                       // Passa routing_key COMPLETA ao invés de prefixo
+			config.AMQP.PrefetchCount,       // QoS: prefetch_count configurável via YAML
+			config.AMQP.PublisherConfirms,   // Publisher Confirms (DEVE SER FALSE se não houver consumer!)
+			redisClient,                      // Passa Redis client (pode ser nil se disabled)
 		)
 		if err != nil {
 			log.Fatalf("ERRO ao criar publisher para %s: %v", camCfg.ID, err)
 		}
-		defer publisher.Close()
+		// IMPORTANTE: NÃO fecha publishers aqui - faremos isso DEPOIS que câmeras pararem
 		publishers = append(publishers, publisher)
+
+		// Registra métricas para esta câmera
+		metricsServer.RegisterCamera(camCfg.ID)
 
 		cam := NewCameraStream(
 			camCfg.ID,
@@ -83,6 +104,7 @@ func main() {
 			config.Quality,
 			publisher,
 			config.CircuitBreaker, // Passa config do circuit breaker
+			metricsServer,         // Passa metrics server para tracking
 		)
 
 		cam.Start()
@@ -92,7 +114,10 @@ func main() {
 	}
 
 	// Monitor de estatísticas (usa primeiro publisher para contagem geral)
-	go statsMonitor(cameras, publishers[0])
+	// Cria contexto para statsMonitor poder ser cancelado
+	statsCtx, statsCancel := context.WithCancel(context.Background())
+	defer statsCancel()
+	go statsMonitor(statsCtx, cameras, publishers[0])
 
 	// Inicia profiling monitor
 	InitSystemStats() // Inicializa tracking de CPU/RAM
@@ -147,11 +172,40 @@ func main() {
 	// Shutdown graceful
 	log.Println("\n\n🛑 Recebido sinal de término, parando...")
 
+	// 0. Cancela statsMonitor ANTES de parar câmeras
+	statsCancel()
+
+	// 1. Para todas as câmeras PRIMEIRO (aguarda goroutines finalizarem)
+	log.Println("📹 Parando câmeras...")
 	for _, cam := range cameras {
 		cam.Stop()
 	}
+	log.Println("✓ Todas as câmeras paradas")
 
-	time.Sleep(500 * time.Millisecond)
+	// 2. Fecha publishers DEPOIS que câmeras pararam
+	log.Println("📤 Fechando publishers...")
+	for i, publisher := range publishers {
+		if err := publisher.Close(); err != nil {
+			log.Printf("⚠️  Erro ao fechar publisher %d: %v", i, err)
+		}
+	}
+	log.Println("✓ Todos os publishers fechados")
+
+	// 3. Fecha Redis client
+	if redisClient != nil {
+		log.Println("🗄️  Fechando Redis client...")
+		if err := redisClient.Close(); err != nil {
+			log.Printf("⚠️  Erro ao fechar Redis: %v", err)
+		}
+		log.Println("✓ Redis client fechado")
+	}
+
+	// 4. Para memory controller se habilitado
+	if memController != nil {
+		log.Println("💾 Parando memory controller...")
+		memController.Stop()
+		log.Println("✓ Memory controller parado")
+	}
 
 	// RELATÓRIO FINAL DE ESTATÍSTICAS
 	printFinalReport(cameras, publishers[0], config.FPS)
@@ -159,15 +213,38 @@ func main() {
 	// RELATÓRIO DE PROFILING
 	PrintProfileReport()
 
+	// RELATÓRIO REDIS (se habilitado)
+	if redisClient != nil {
+		storeCount, storeErrors, getCount, getErrors := redisClient.Stats()
+		log.Println("\n" + "================================================================")
+		log.Println("                    RELATÓRIO REDIS")
+		log.Println("================================================================")
+		log.Printf("   Frames Armazenados:  %d", storeCount)
+		log.Printf("   Erros de Store:      %d", storeErrors)
+		log.Printf("   Gets Realizados:     %d", getCount)
+		log.Printf("   Erros de Get:        %d", getErrors)
+		if storeCount > 0 {
+			successRate := float64(storeCount-storeErrors) / float64(storeCount) * 100
+			log.Printf("   Taxa de Sucesso:     %.2f%%", successRate)
+		}
+		log.Println("================================================================")
+	}
+
 	log.Println("✓ Sistema encerrado com sucesso")
 }
 
 // statsMonitor exibe estatísticas periodicamente
-func statsMonitor(cameras []*CameraStream, publisher *Publisher) {
+func statsMonitor(ctx context.Context, cameras []*CameraStream, publisher *Publisher) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("📊 Stats monitor parado")
+			return
+		case <-ticker.C:
+		}
 		sep := "============================================================"
 
 		log.Println("\n" + sep)

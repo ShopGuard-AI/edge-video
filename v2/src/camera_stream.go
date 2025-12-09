@@ -22,6 +22,7 @@ type CameraStream struct {
 
 	publisher      *Publisher
 	circuitBreaker *CircuitBreaker // Circuit breaker para proteção contra falhas
+	metricsServer  *MetricsServer  // Servidor de métricas Prometheus
 	ctx            context.Context
 	cancel         context.CancelFunc
 
@@ -39,10 +40,13 @@ type CameraStream struct {
 
 	frameChan chan []byte
 	cmd       *exec.Cmd
+
+	// Graceful shutdown
+	wg sync.WaitGroup // Rastreia goroutines ativas
 }
 
 // NewCameraStream cria câmera com buffers PRIVADOS e circuit breaker
-func NewCameraStream(id, url string, fps, quality int, publisher *Publisher, cbConfig CircuitBreakerConfig) *CameraStream {
+func NewCameraStream(id, url string, fps, quality int, publisher *Publisher, cbConfig CircuitBreakerConfig, metricsServer *MetricsServer) *CameraStream {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	c := &CameraStream{
@@ -52,6 +56,7 @@ func NewCameraStream(id, url string, fps, quality int, publisher *Publisher, cbC
 		Quality:        quality,
 		publisher:      publisher,
 		circuitBreaker: NewCircuitBreaker(id, cbConfig),
+		metricsServer:  metricsServer,
 		ctx:            ctx,
 		cancel:         cancel,
 		frameChan:      make(chan []byte, 5), // Buffer de 5 frames
@@ -102,15 +107,57 @@ func (c *CameraStream) Start() {
 	c.running = true
 	c.mu.Unlock()
 
-	go c.startFFmpeg()
-	go c.publishLoop()
+	// Inicia goroutines principais com wrapper que gerencia WaitGroup
+	c.startFFmpegWithWaitGroup()
+	c.startPublishLoopWithWaitGroup()
 }
 
-// Stop para
+// startFFmpegWithWaitGroup wrapper que gerencia WaitGroup
+func (c *CameraStream) startFFmpegWithWaitGroup() {
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.startFFmpeg()
+	}()
+}
+
+// startPublishLoopWithWaitGroup wrapper que gerencia WaitGroup
+func (c *CameraStream) startPublishLoopWithWaitGroup() {
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.publishLoop()
+	}()
+}
+
+// Stop para e aguarda finalização de todas as goroutines
 func (c *CameraStream) Stop() {
+	log.Printf("[%s] Iniciando shutdown...", c.ID)
+
+	c.mu.Lock()
+	c.running = false
+	c.mu.Unlock()
+
+	// Cancela contexto (sinaliza para todas as goroutines pararem)
 	c.cancel()
+
+	// Mata processo FFmpeg se existir
 	if c.cmd != nil && c.cmd.Process != nil {
 		c.cmd.Process.Kill()
+	}
+
+	// Aguarda todas as goroutines finalizarem (com timeout de 45 segundos)
+	done := make(chan struct{})
+	go func() {
+		c.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Printf("[%s] ✓ Shutdown completo - todas as goroutines finalizadas", c.ID)
+	case <-time.After(45 * time.Second):
+		log.Printf("[%s] ⚠️  Timeout (45s) no shutdown - forçando encerramento", c.ID)
 	}
 }
 
@@ -283,6 +330,11 @@ func (c *CameraStream) readFrames(reader *bufio.Reader) {
 					c.lastFrameReceived = time.Now()
 					c.mu.Unlock()
 
+					// Registra frame recebido no Prometheus
+					if c.metricsServer != nil {
+						c.metricsServer.TrackFrameReceived(c.ID, frameSize)
+					}
+
 					// Envia CÓPIA para o channel (não o buffer do pool!)
 					select {
 					case c.frameChan <- frameCopy:
@@ -292,6 +344,11 @@ func (c *CameraStream) readFrames(reader *bufio.Reader) {
 						c.mu.Lock()
 						c.framesDropped++
 						c.mu.Unlock()
+
+						// Registra frame descartado no Prometheus
+						if c.metricsServer != nil {
+							c.metricsServer.TrackFrameDropped(c.ID)
+						}
 					}
 				}
 
@@ -308,11 +365,39 @@ func (c *CameraStream) publishLoop() {
 	interval := time.Second / time.Duration(c.FPS)
 	lastPublish := time.Now()
 
+	// WaitGroup para rastrear goroutines de publish
+	var publishWg sync.WaitGroup
+
 	for {
 		select {
 		case <-c.ctx.Done():
-			log.Printf("[%s] Publicação parada", c.ID)
-			return
+			log.Printf("[%s] 🛑 Contexto cancelado, aguardando goroutines de publish finalizarem...", c.ID)
+
+			// Aguarda todas as goroutines de publish finalizarem (com timeout maior)
+			done := make(chan struct{})
+			go func() {
+				publishWg.Wait()
+				close(done)
+			}()
+
+			// Monitor de progresso a cada 5 segundos
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-done:
+					log.Printf("[%s] ✓ Todas as goroutines de publish finalizadas", c.ID)
+					log.Printf("[%s] ✓ Publicação parada", c.ID)
+					return
+				case <-time.After(40 * time.Second):
+					log.Printf("[%s] ⚠️  Timeout (40s) aguardando goroutines de publish - forçando shutdown", c.ID)
+					log.Printf("[%s] Publicação parada", c.ID)
+					return
+				case <-ticker.C:
+					log.Printf("[%s] ⏳ Ainda aguardando goroutines de publish finalizarem...", c.ID)
+				}
+			}
 		default:
 		}
 
@@ -350,11 +435,27 @@ func (c *CameraStream) publishLoop() {
 		// CORREÇÃO CRÍTICA: NÃO precisa mais de frameCopy aqui!
 		// O frame JÁ É UMA CÓPIA INDEPENDENTE feita na linha 245
 
-		// Publica ASSÍNCRONA
+		// Publica ASSÍNCRONA (rastreada pelo publishWg)
+		publishWg.Add(1)
 		go func(cameraID string, frameData []byte, frameNum uint64, start time.Time) {
+			defer publishWg.Done()
+
+			// Verifica se contexto foi cancelado antes de publicar
+			select {
+			case <-c.ctx.Done():
+				// Contexto cancelado, não publica
+				return
+			default:
+			}
+
 			err := c.publisher.Publish(cameraID, frameData, start)
 			publishDuration := time.Since(start)
 			TrackPublish(publishDuration)
+
+			// Registra publicação no Prometheus
+			if c.metricsServer != nil {
+				c.metricsServer.TrackFramePublished(cameraID, publishDuration, err == nil)
+			}
 
 			if frameNum%30 == 0 {
 				log.Printf("[%s] Frame #%d - Publicação: %v, Tamanho: %d bytes",
@@ -362,7 +463,14 @@ func (c *CameraStream) publishLoop() {
 			}
 
 			if err != nil {
-				log.Printf("[%s] ERRO ao publicar frame #%d: %v", cameraID, frameNum, err)
+				// Só loga erro se NÃO foi devido ao shutdown
+				select {
+				case <-c.ctx.Done():
+					// Shutdown em andamento, ignora erro
+					return
+				default:
+					log.Printf("[%s] ERRO ao publicar frame #%d: %v", cameraID, frameNum, err)
+				}
 			}
 		}(c.ID, frame, frameNum, start)
 	}
@@ -411,9 +519,9 @@ func (c *CameraStream) retryFFmpegWithBackoff() {
 			continue
 		}
 
-		// Tenta reconectar
+		// Tenta reconectar usando wrapper que gerencia WaitGroup
 		log.Printf("[%s] Tentando reconectar FFmpeg (estado: %s)...", c.ID, stats.State)
-		go c.startFFmpeg()
+		c.startFFmpegWithWaitGroup()
 		return
 	}
 }

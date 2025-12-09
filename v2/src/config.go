@@ -14,15 +14,24 @@ type Config struct {
 	AMQP             AMQPConfig               `yaml:"amqp"`
 	CircuitBreaker   CircuitBreakerConfig     `yaml:"circuit_breaker"`
 	MemoryController MemoryControllerConfig   `yaml:"memory_controller"`
+	Redis            RedisConfig              `yaml:"redis"`
+	Metadata         MetadataConfig           `yaml:"metadata"`
 	Cameras          []CamConfig              `yaml:"cameras"`
+}
+
+// MetadataConfig configuração de publicação de metadados
+type MetadataConfig struct {
+	Enabled          bool `yaml:"enabled"`
+	IncludeRedisKey  bool `yaml:"include_redis_key"`
 }
 
 // AMQPConfig configuração do RabbitMQ
 type AMQPConfig struct {
-	URL              string `yaml:"url"`
-	Exchange         string `yaml:"exchange"`
-	RoutingKeyPrefix string `yaml:"routing_key_prefix"`
-	PrefetchCount    int    `yaml:"prefetch_count"` // QoS: limite de frames não-confirmados (0 = ilimitado)
+	URL               string `yaml:"url"`
+	Exchange          string `yaml:"exchange"`
+	RoutingKeyPrefix  string `yaml:"routing_key_prefix"`
+	PrefetchCount     int    `yaml:"prefetch_count"`     // QoS: limite de frames não-confirmados (0 = ilimitado)
+	PublisherConfirms bool   `yaml:"publisher_confirms"` // Habilita Publisher Confirms (deve ser false se não houver consumer!)
 }
 
 // CamConfig configuração de câmera

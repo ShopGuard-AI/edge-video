@@ -1,0 +1,30 @@
+# Edge Video Consumer Configuration
+
+# RabbitMQ Configuration
+rabbitmq:
+  url: "amqp://supercarlao_rj_mercado:vTUaGG9S0Kbl_1AhqPxudML1jCYHRq0efkRDA6p_lgM@34.71.212.239:5672/supercarlao_rj_mercado"
+  queue: "supercarlao_rj_mercado.frames"  # Nome da fila para consumir
+  exchange: "supercarlao_rj_mercado.exchange"
+  routing_key: "supercarlao_rj_mercado.*"  # Consome de todas as câmeras
+  prefetch_count: 50  # Quantos frames processar em paralelo (AUMENTADO para 6 cameras)
+  auto_ack: false     # Manual ACK (mais seguro)
+
+# Redis Configuration (para buscar frames se redis_key presente)
+redis:
+  enabled: true  # HABILITADO - busca frames do Redis usando redis_key do header
+  address: "34.30.59.236:6379"
+  password: "MinhaSenhaMuitoForte@2024"
+  db: 0
+  timeout: 1  # segundos (timeout rápido para evitar travamentos se Redis estiver lento)
+
+# Processing Configuration
+processing:
+  save_frames: false       # Salvar frames em disco (true/false)
+  output_dir: "./frames"   # Diretório para salvar frames
+  log_every_n: 100         # Log a cada N frames processados
+  max_workers: 4           # Workers paralelos para processar frames
+
+# Metrics
+metrics:
+  enabled: true
+  port: 9090  # Prometheus metrics endpoint

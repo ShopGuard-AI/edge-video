@@ -245,6 +245,11 @@ func (cb *CircuitBreaker) transitionTo(newState CircuitState) {
 		fmt.Printf("🟢 Circuit Breaker [%s]: %s → %s (recuperado! backoff resetado)\n",
 			cb.name, oldState, newState)
 	}
+
+	// Atualiza métricas Prometheus (se metricsServer disponível)
+	if metricsServer != nil {
+		metricsServer.UpdateCircuitBreakerState(cb.name, newState)
+	}
 }
 
 // increaseBackoff aumenta backoff exponencialmente

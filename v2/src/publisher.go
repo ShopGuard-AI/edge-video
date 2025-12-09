@@ -18,8 +18,14 @@ type Publisher struct {
 	routingKey    string // Routing key COMPLETA (não é mais prefixo)
 	prefetchCount int    // QoS: limite de frames não-confirmados (0 = ilimitado)
 
+	// Redis client (opcional - se habilitado, armazena frames)
+	redisClient *RedisClient
+
+	// Publisher Confirms (configurável - DEVE SER FALSE se não houver consumer!)
+	publisherConfirmsEnabled bool
+
 	mu            sync.Mutex
-	publishMu     sync.Mutex // Mutex DEDICADO para serializar publicações (channel.Publish não é thread-safe!)
+	// REMOVIDO publishMu - amqp091-go channel.Publish() é thread-safe!
 	publishCount  uint64
 	publishErrors uint64
 	reconnecting  bool
@@ -36,13 +42,15 @@ type Publisher struct {
 }
 
 // NewPublisher cria um novo publisher com auto-reconnect
-func NewPublisher(amqpURL, exchange, routingKey string, prefetchCount int) (*Publisher, error) {
+func NewPublisher(amqpURL, exchange, routingKey string, prefetchCount int, publisherConfirms bool, redisClient *RedisClient) (*Publisher, error) {
 	p := &Publisher{
-		amqpURL:       amqpURL,
-		exchange:      exchange,
-		routingKey:    routingKey,    // Usa routing_key completa
-		prefetchCount: prefetchCount, // QoS configurável
-		done:          make(chan struct{}),
+		amqpURL:                  amqpURL,
+		exchange:                 exchange,
+		routingKey:               routingKey,         // Usa routing_key completa
+		prefetchCount:            prefetchCount,      // QoS configurável
+		publisherConfirmsEnabled: publisherConfirms,  // Publisher Confirms configurável
+		redisClient:              redisClient,        // Redis client (pode ser nil se disabled)
+		done:                     make(chan struct{}),
 	}
 
 	// Conecta inicialmente com retry
@@ -143,29 +151,36 @@ func (p *Publisher) connect() error {
 		return fmt.Errorf("falha ao configurar QoS: %w", err)
 	}
 
-	// HABILITA PUBLISHER CONFIRMS
-	// Isso faz o RabbitMQ enviar confirmações (ACK/NACK) para cada mensagem publicada
-	err = p.channel.Confirm(false)
-	if err != nil {
-		p.channel.Close()
-		p.conn.Close()
-		return fmt.Errorf("falha ao habilitar publisher confirms: %w", err)
+	// PUBLISHER CONFIRMS (condicional - depende da configuração)
+	if p.publisherConfirmsEnabled {
+		// Habilita Publisher Confirms
+		// Isso faz o RabbitMQ enviar confirmações (ACK/NACK) para cada mensagem publicada
+		err = p.channel.Confirm(false)
+		if err != nil {
+			p.channel.Close()
+			p.conn.Close()
+			return fmt.Errorf("falha ao habilitar publisher confirms: %w", err)
+		}
+
+		// Canal para receber confirmações
+		p.confirmsChan = p.channel.NotifyPublish(make(chan amqp.Confirmation, 1000))
+
+		// Cria novo canal de controle para este goroutine
+		p.confirmsDone = make(chan struct{})
+
+		// Inicia goroutine para processar confirmações
+		go p.handleConfirms()
+
+		log.Printf("✓ QoS configurado: prefetch=%d | Publisher Confirms HABILITADO para exchange: %s",
+			p.prefetchCount, p.exchange)
+	} else {
+		log.Printf("✓ QoS configurado: prefetch=%d | Publisher Confirms DESABILITADO para exchange: %s",
+			p.prefetchCount, p.exchange)
 	}
-
-	// Canal para receber confirmações
-	p.confirmsChan = p.channel.NotifyPublish(make(chan amqp.Confirmation, 1000))
-
-	// Cria novo canal de controle para este goroutine
-	p.confirmsDone = make(chan struct{})
-
-	// Inicia goroutine para processar confirmações
-	go p.handleConfirms()
 
 	// Monitora fechamento de conexão
 	p.notifyClose = make(chan *amqp.Error)
 	p.conn.NotifyClose(p.notifyClose)
-
-	log.Printf("✓ QoS configurado: prefetch=%d | Publisher Confirms habilitado para exchange: %s", p.prefetchCount, p.exchange)
 
 	return nil
 }
@@ -284,66 +299,91 @@ func (p *Publisher) reconnect() {
 	}
 }
 
-// Publish publica um frame no RabbitMQ com retry
+// Publish publica um frame no RabbitMQ com retry (OTIMIZADO - SEM MUTEX GLOBAL!)
 func (p *Publisher) Publish(cameraID string, frameData []byte, timestamp time.Time) error {
-	// CRÍTICO: Todo o processo de publicação deve ser ATÔMICO
-	// Adquire AMBOS os locks no início para evitar race conditions
-	p.publishMu.Lock()
-	defer p.publishMu.Unlock()
+	startTotal := time.Now()
 
+	// 1. Verifica conexão (lock mínimo)
 	p.mu.Lock()
-
-	// Se não conectado, retorna erro
 	if !p.connected {
 		p.publishErrors++
 		p.mu.Unlock()
 		return fmt.Errorf("não conectado ao RabbitMQ")
 	}
-
-	// USA A ROUTING KEY FIXA DO PUBLISHER (já configurada por câmera)
 	routingKey := p.routingKey
-
-	// CRÍTICO: Captura o channel DENTRO do lock para evitar race condition
 	channel := p.channel
+	shouldDebug := p.publishCount < 18
+	p.mu.Unlock()
 
 	// DEBUG: Log detalhado de publicação (primeiros 18 frames)
-	if p.publishCount < 18 { // 3 frames x 6 cameras = 18 frames
+	if shouldDebug {
 		log.Printf("[PUBLISH DEBUG] Camera: %s, RoutingKey: %s, Size: %d bytes, Header[camera_id]: %s",
 			cameraID, routingKey, len(frameData), cameraID)
 	}
 
-	p.mu.Unlock()
-
-	// CRÍTICO: FAZ CÓPIA DEFENSIVA ANTES DE PASSAR PARA AMQP
-	// A biblioteca streadway/amqp pode manter referência ao slice internamente!
-	// Esta é a ÚLTIMA linha de defesa contra race conditions
+	// 2. CÓPIA DEFENSIVA (fora de qualquer lock)
 	frameDataCopy := make([]byte, len(frameData))
 	copy(frameDataCopy, frameData)
 
-	// Tenta publicar com a CÓPIA DEFENSIVA
-	// IMPORTANTE: Serializado pelo publishMu (defer unlock no topo)
+	// 3. REDIS STORE (OBRIGATÓRIO - sem Redis, não há como enviar frame!)
+	// V1.6-STYLE: Redis é MANDATÓRIO pois apenas redis_key é enviado ao RabbitMQ
+	var redisKey string
+	var redisTime time.Duration
+	if p.redisClient == nil || !p.redisClient.IsEnabled() {
+		p.mu.Lock()
+		p.publishErrors++
+		p.mu.Unlock()
+		return fmt.Errorf("Redis OBRIGATÓRIO para V1.6-style publishing (redis_enabled=false no config)")
+	}
+
+	startRedis := time.Now()
+	var storeErr error
+	redisKey, storeErr = p.redisClient.Store(cameraID, frameDataCopy, timestamp)
+	redisTime = time.Since(startRedis)
+
+	if storeErr != nil {
+		p.mu.Lock()
+		p.publishErrors++
+		p.mu.Unlock()
+		return fmt.Errorf("[%s] Redis store FALHOU (obrigatório): %w", cameraID, storeErr)
+	}
+
+	// 4. RABBITMQ PUBLISH (PARALELO - channel.Publish() é thread-safe!)
+	// V1.6-STYLE: Envia apenas redis_key no body, NÃO o frame completo
+	// Isso reduz drasticamente o tamanho da mensagem (316KB → ~50 bytes)
+
+	// Calcula TTL da mensagem (mesmo TTL do Redis para consistência)
+	var ttlMs string
+	if p.redisClient != nil {
+		ttlMs = fmt.Sprintf("%d", int64(p.redisClient.config.TTL.Milliseconds()))
+	}
+
+	startRabbit := time.Now()
 	err := channel.Publish(
 		p.exchange,
 		routingKey,
 		false, // mandatory
 		false, // immediate
 		amqp.Publishing{
-			ContentType:  "application/octet-stream",
-			Body:         frameDataCopy, // USA CÓPIA DEFENSIVA!
+			ContentType:  "text/plain",
+			Body:         []byte(redisKey), // Apenas redis_key (ex: "frames:cam1:1733681234567")
 			Timestamp:    timestamp,
 			DeliveryMode: amqp.Transient, // Não persiste (mais rápido)
+			Expiration:   ttlMs,          // TTL da mensagem (igual ao Redis: 120s = 120000ms)
 			Headers: amqp.Table{
 				"camera_id": cameraID,
+				"redis_key": redisKey,
 			},
 		},
 	)
+	rabbitTime := time.Since(startRabbit)
+	totalTime := time.Since(startTotal)
 
-	// Re-adquire lock para atualizar contadores
+	// 5. Atualiza contadores (lock mínimo)
 	p.mu.Lock()
-
 	if err != nil {
 		p.publishErrors++
-		p.connected = false // Marca como desconectado
+		p.connected = false
 		p.mu.Unlock()
 
 		// Trigger reconexão
@@ -353,7 +393,15 @@ func (p *Publisher) Publish(cameraID string, frameData []byte, timestamp time.Ti
 	}
 
 	p.publishCount++
+	count := p.publishCount
 	p.mu.Unlock()
+
+	// 6. Log de timing detalhado a cada 100 frames
+	if count%100 == 0 {
+		log.Printf("[%s] Frame #%d | Total: %v | Redis: %v | RabbitMQ: %v",
+			cameraID, count, totalTime, redisTime, rabbitTime)
+	}
+
 	return nil
 }
 

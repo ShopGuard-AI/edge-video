@@ -89,6 +89,9 @@ func TrackPublishConfirm(ack bool) {
 	} else {
 		globalProfile.publishConfirmsNack.Add(1)
 	}
+
+	// Atualiza métricas Prometheus
+	TrackPublishConfirmMetrics(ack)
 }
 
 // UpdateMemoryStats atualiza stats de memória
