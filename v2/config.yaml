@@ -23,7 +23,7 @@ circuit_breaker:
 # Memory Controller (gestão automática de memória)
 # Se habilitado, monitora uso de RAM e dispara GC quando necessário
 memory_controller:
-  enabled: true                # Habilita memory controller (true/false)
+  enabled: false                # Habilita memory controller (true/false)
   max_memory_mb: 2048          # Limite máximo de memória (MB) - ajuste conforme seu sistema
   warning_percent: 60.0        # Nível WARNING (60% do max) - começa throttling leve
   critical_percent: 75.0       # Nível CRITICAL (75% do max) - throttling médio
