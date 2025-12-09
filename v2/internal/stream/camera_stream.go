@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"edge-video/v2/internal/health"
 	"edge-video/v2/internal/messaging"
 	"edge-video/v2/internal/monitoring"
 	"edge-video/v2/internal/resilience"
@@ -25,8 +26,9 @@ type CameraStream struct {
 	Quality  int
 
 	publisher      *messaging.Publisher
-	circuitBreaker *resilience.CircuitBreaker // Circuit breaker para proteção contra falhas
-	metricsServer  *monitoring.MetricsServer  // Servidor de métricas Prometheus
+	circuitBreaker *resilience.CircuitBreaker      // Circuit breaker para proteção contra falhas
+	publishHealth  *health.PublishHealthMonitor    // Monitor de saúde de publish
+	metricsServer  *monitoring.MetricsServer       // Servidor de métricas Prometheus
 	ctx            context.Context
 	cancel         context.CancelFunc
 
@@ -63,6 +65,7 @@ func NewCameraStream(id, url string, fps, quality int, publisher *messaging.Publ
 		Quality:        quality,
 		publisher:      publisher,
 		circuitBreaker: resilience.NewCircuitBreaker(id, cbConfig),
+		publishHealth:  health.NewPublishHealthMonitor(10, 0.8), // Janela: 10, Threshold: 80%
 		metricsServer:  metricsServer,
 		ctx:            ctx,
 		cancel:         cancel,
@@ -120,6 +123,7 @@ func (c *CameraStream) Start() {
 	// Inicia goroutines principais com wrapper que gerencia WaitGroup
 	c.startFFmpegWithWaitGroup()
 	c.startPublishLoopWithWaitGroup()
+	c.startHealthMonitorWithWaitGroup()
 }
 
 // startFFmpegWithWaitGroup wrapper que gerencia WaitGroup
@@ -138,6 +142,54 @@ func (c *CameraStream) startPublishLoopWithWaitGroup() {
 		defer c.wg.Done()
 		c.publishLoop()
 	}()
+}
+
+// startHealthMonitorWithWaitGroup wrapper que gerencia WaitGroup
+func (c *CameraStream) startHealthMonitorWithWaitGroup() {
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.healthMonitor()
+	}()
+}
+
+// healthMonitor monitora saúde de publish e loga estatísticas periodicamente
+func (c *CameraStream) healthMonitor() {
+	log.Printf("[%s] Health monitor iniciado", c.ID)
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			log.Printf("[%s] Health monitor parado", c.ID)
+			return
+		case <-ticker.C:
+			stats := c.publishHealth.GetStats()
+
+			// Log de estatísticas
+			if stats.TotalRecent > 0 {
+				log.Printf("[%s] 📊 Health Stats: Success=%d, Errors=%d, ErrorRate=%.1f%%, Consecutive=%d",
+					c.ID,
+					stats.RecentSuccesses,
+					stats.RecentErrors,
+					stats.ErrorRate*100,
+					stats.ConsecutiveFails)
+
+				// Alerta se degradado
+				if stats.IsDegraded {
+					log.Printf("[%s] ⚠️  WARNING: Publish health DEGRADED! ErrorRate=%.1f%% (threshold: 80%%)",
+						c.ID, stats.ErrorRate*100)
+				}
+
+				// Alerta emergência
+				if stats.IsEmergency {
+					log.Printf("[%s] 🚨 EMERGENCY: %d consecutive failures! Circuit Breaker will trigger soon.",
+						c.ID, stats.ConsecutiveFails)
+				}
+			}
+		}
+	}
 }
 
 // Stop para e aguarda finalização de todas as goroutines
@@ -494,7 +546,21 @@ func (c *CameraStream) publishLoop() {
 					return
 				default:
 					log.Printf("[%s] ERRO ao publicar frame #%d: %v", cameraID, frameNum, err)
+
+					// ✅ HEALTH MONITOR: Registra erro
+					c.publishHealth.RecordError()
+
+					// 🔥 CIRCUIT BREAKER HÍBRIDO: Se publish está degradado, registra falha
+					if c.publishHealth.IsDegraded() {
+						log.Printf("[%s] ⚠️  Publish health DEGRADED (80%%+ erros), acionando Circuit Breaker", cameraID)
+						c.circuitBreaker.Execute(func() error {
+							return fmt.Errorf("publish health degraded")
+						})
+					}
 				}
+			} else {
+				// ✅ HEALTH MONITOR: Registra sucesso
+				c.publishHealth.RecordSuccess()
 			}
 		}(c.ID, frame, frameNum, start)
 	}
