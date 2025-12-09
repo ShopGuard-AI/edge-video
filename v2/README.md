@@ -6,13 +6,16 @@ Versão **completamente reescrita** com foco em **simplicidade, confiabilidade e
 
 ### Características Principais
 
+- ✅ **V1.6-Style Architecture**: Redis obrigatório, RabbitMQ apenas metadata (99.93% menos tráfego)
+- ✅ **Redis Integration**: Vhost namespace, TTL sincronizado, chave única por frame
+- ✅ **Consumer Python**: Validação Redis mandatory, x-max-length=1, apenas frame mais recente
 - ✅ **Simplicidade**: Código enxuto (~690 linhas vs ~6,192 da V1.6)
 - ✅ **Sincronização perfeita**: Latest Frame Policy garante sync entre câmeras
 - ✅ **Performance otimizada**: 85%+ de eficiência (12.74 FPS real vs 15 FPS target)
 - ✅ **Zero frame drops**: Buffer de 5 frames com Latest Frame Policy
 - ✅ **Auto-reconnect AMQP**: Reconexão automática com exponential backoff
 - ✅ **RTSP/RTMP Support**: Detecção automática de protocolo
-- ✅ **Frame Pooling**: Redução de GC pressure via sync.Pool
+- ✅ **Frame Pooling**: Redução de GC pressure via local buffer pool
 - ✅ **Async Publishing**: Publicação não-bloqueante
 - ✅ **Circuit Breaker**: Proteção contra falhas de câmera com backoff exponencial
 - ✅ **System Metrics**: Monitoramento de CPU e RAM (processo + sistema)
@@ -90,6 +93,98 @@ v2/
 ---
 
 ## 🏗️ Arquitetura
+
+### V1.6-Style: Redis Obrigatório (Implementação Atual)
+
+A arquitetura atual implementa o padrão V1.6-style onde **apenas o redis_key é enviado ao RabbitMQ**, não o frame completo.
+
+**Fluxo de Dados:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 1. PRODUCER (Go)                                            │
+├─────────────────────────────────────────────────────────────┤
+│ Frame capturado (316KB JPEG)                                │
+│    ↓                                                         │
+│ Redis.SET("vhost:frames:camera:timestamp", jpeg, TTL=120s)  │
+│    ↓                                                         │
+│ RabbitMQ.Publish(                                           │
+│   Body: "vhost:frames:camera:timestamp"  ← ~50 bytes        │
+│   Expiration: "120000" (120s em ms)                         │
+│ )                                                           │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ 2. REDIS (Storage)                                          │
+├─────────────────────────────────────────────────────────────┤
+│ Key: "supercarlao_rj_mercado:frames:cam1:1765243271..."    │
+│ Value: [316KB JPEG bytes]                                   │
+│ TTL: 120 segundos                                           │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ 3. RABBITMQ (Metadata)                                      │
+├─────────────────────────────────────────────────────────────┤
+│ Body: "supercarlao_rj_mercado:frames:cam1:1765243271..."   │
+│ Size: ~50 bytes (vs 316KB antes)                           │
+│ TTL: 120 segundos (sincronizado com Redis)                 │
+│ Queue: x-max-length=1 (apenas frame mais recente)          │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ 4. CONSUMER (Python)                                        │
+├─────────────────────────────────────────────────────────────┤
+│ Recebe mensagem do RabbitMQ                                │
+│    ↓                                                        │
+│ redis_key = body.decode('utf-8')                           │
+│    ↓                                                        │
+│ frame = Redis.GET(redis_key)  ← Busca frame no Redis      │
+│    ↓                                                        │
+│ cv2.imdecode(frame) → Display                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Formato da Chave Redis:**
+```
+vhost:prefix:camera:timestamp
+supercarlao_rj_mercado:frames:cam1:1765243271527867100
+```
+
+**Benefícios:**
+- ✅ **99.93% redução** no tráfego RabbitMQ (28MB/s → 21KB/s)
+- ✅ **TTL sincronizado**: Redis e RabbitMQ expiram em 120s
+- ✅ **x-max-length=1**: Fila com apenas frame mais recente
+- ✅ **Namespace isolado**: vhost incluído na chave Redis
+
+**Trade-offs:**
+- ⚠️ **Redis obrigatório**: Single point of failure
+- ⚠️ **Redis remoto lento**: 8-15s/frame com Redis remoto (34.30.59.236)
+- ⚠️ **Latência alta**: Requer Redis local ou otimização
+
+**Configuração:**
+```yaml
+redis:
+  enabled: true                          # OBRIGATÓRIO
+  address: "34.30.59.236:6379"           # Redis remoto (ou localhost)
+  password: "MinhaSenhaMuitoForte@2024"
+  db: 0
+  vhost: "supercarlao_rj_mercado"        # Prefixo da chave
+  prefix: "frames"
+  ttl: 120s                              # TTL global (Redis + RabbitMQ)
+```
+
+**Consumer Python:**
+```yaml
+# v2/consumer/config.yaml
+redis:
+  enabled: true  # OBRIGATÓRIO (sem fallback para body)
+
+rabbitmq:
+  queue: "supercarlao_rj_mercado.frames"
+  # Fila declarada com x-max-length: 1
+```
+
+---
 
 ### Dual-Goroutine per Camera
 
@@ -223,6 +318,18 @@ amqp:
   exchange: "your.exchange"
   routing_key_prefix: "your.prefix."
   prefetch_count: 50  # QoS: máximo de frames não-confirmados por consumer (0 = ilimitado)
+
+# Redis (OBRIGATÓRIO - V1.6-style)
+redis:
+  enabled: true                          # DEVE ser true
+  address: "localhost:6379"              # Redis local recomendado
+  password: "yourpassword"               # Senha do Redis
+  db: 0                                  # Database number
+  vhost: "your_vhost"                    # VHost do RabbitMQ (prefixo da chave)
+  prefix: "frames"                       # Prefixo adicional
+  ttl: 120s                              # TTL (Redis + RabbitMQ)
+  max_retries: 3
+  retry_delay: 100ms
 
 # Circuit Breaker (proteção contra falhas de câmera)
 circuit_breaker:
@@ -720,6 +827,61 @@ quality: 10  # Economia de banda (~25KB/frame)
 ---
 
 ## 📝 Changelog
+
+### V2.3 (Dezembro 2024) - **V1.6-STYLE ARCHITECTURE (Redis Mandatory)** 🔴
+
+**🆕 Arquitetura Redesenhada**:
+
+1. **Redis Obrigatório** ✅
+   - RabbitMQ body contém apenas `redis_key` (~50 bytes)
+   - Frames JPEG (316KB) armazenados exclusivamente no Redis
+   - Producer retorna erro se Redis falhar (sem fallback)
+   - Consumer sem fallback para body (Redis obrigatório)
+
+2. **Chave Redis com VHost** ✅
+   - Formato: `vhost:prefix:camera:timestamp`
+   - Exemplo: `supercarlao_rj_mercado:frames:cam1:1765243271527867100`
+   - Namespace isolado por vhost/tenant
+   - Evita colisão entre ambientes
+
+3. **TTL Sincronizado** ✅
+   - Redis TTL: 120 segundos
+   - RabbitMQ Expiration: 120000ms (sincronizado)
+   - Mensagens e frames expiram juntos
+   - Zero acúmulo de lixo
+
+4. **Consumer Python com x-max-length=1** ✅
+   - Fila limitada a 1 mensagem (frame mais recente)
+   - `x-overflow: drop-head` (descarta antiga)
+   - Baixa latência (sempre processa frame atual)
+   - Sem acúmulo de backlog
+
+**Redução de Tráfego**:
+- RabbitMQ: **99.93% menor** (28MB/s → 21KB/s)
+- Body: 316KB → 50 bytes por mensagem
+
+**Arquivos Novos**:
+- `v2/src/redis_client.go`: Cliente Redis com vhost support
+- `v2/src/metrics.go`: Métricas Prometheus para Redis
+- `v2/consumer/`: Consumer Python completo com Redis obrigatório
+  - `consumer.py`: Consumer com validação Redis mandatory
+  - `config.yaml`: Configuração com Redis enabled
+  - `README.md`: Documentação completa (257 linhas)
+  - `requirements.txt`: Dependências Python
+
+**Arquivos Modificados**:
+- `v2/config.yaml`: Adicionado `redis.vhost` field
+- `v2/src/publisher.go`: Body = redis_key (não frame), Expiration field
+- `v2/src/config.go`: RedisConfig com Vhost field
+
+**Trade-offs**:
+- ⚠️ **Redis = Single Point of Failure**: Sistema para se Redis cair
+- ⚠️ **Redis remoto lento**: 8-15s/frame (34.30.59.236)
+- ⚠️ **Requer otimização**: Redis local ou arquitetura híbrida
+
+**Status**: ✅ IMPLEMENTADO (latência alta com Redis remoto)
+
+---
 
 ### V2.2 (Dezembro 2024) - **CIRCUIT BREAKER & SYSTEM METRICS** 🛡️
 
