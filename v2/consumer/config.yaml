@@ -3,11 +3,12 @@
 # RabbitMQ Configuration
 rabbitmq:
   url: "amqp://supercarlao_rj_mercado:vTUaGG9S0Kbl_1AhqPxudML1jCYHRq0efkRDA6p_lgM@34.71.212.239:5672/supercarlao_rj_mercado"
-  queue: "supercarlao_rj_mercado.frames"  # Nome da fila para consumir
+  queue: "supercarlao_rj_mercado.frames.cam5"  # Fila específica para cam5 (evita mensagens de outras cameras)
   exchange: "supercarlao_rj_mercado.exchange"
-  routing_key: "supercarlao_rj_mercado.*"  # Consome de todas as câmeras
-  prefetch_count: 50  # Quantos frames processar em paralelo (AUMENTADO para 6 cameras)
+  routing_key: "supercarlao_rj_mercado.cam5"  # Consome APENAS cam5 (altere para cam1/cam2/etc se quiser outra)
+  prefetch_count: 100  # Quantos frames processar em paralelo (AUMENTADO para consumir rápido e evitar acúmulo)
   auto_ack: false     # Manual ACK (mais seguro)
+  purge_on_start: true  # PURGA mensagens antigas ao iniciar (evita dessincronização!)
 
 # Redis Configuration (para buscar frames se redis_key presente)
 redis:
@@ -15,14 +16,14 @@ redis:
   address: "34.30.59.236:6379"
   password: "MinhaSenhaMuitoForte@2024"
   db: 0
-  timeout: 1  # segundos (timeout rápido para evitar travamentos se Redis estiver lento)
+  timeout: 5  # segundos (aumentado para acomodar latência de rede ~140ms + overhead Redis)
 
 # Processing Configuration
 processing:
   save_frames: false       # Salvar frames em disco (true/false)
   output_dir: "./frames"   # Diretório para salvar frames
   log_every_n: 100         # Log a cada N frames processados
-  max_workers: 4           # Workers paralelos para processar frames
+  max_workers: 12          # Workers paralelos para processar frames (AUMENTADO para 12!)
 
 # Metrics
 metrics:

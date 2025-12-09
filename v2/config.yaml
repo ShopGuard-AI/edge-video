@@ -43,6 +43,7 @@ redis:
   ttl: 120s                              # TTL dos frames (2 minutos)
   max_retries: 3                         # Tentativas em caso de falha
   retry_delay: 100ms                     # Delay entre tentativas
+  timeout: 2s                            # Timeout por operação Store/Get (2s = bom balanço)
 
 # Metadata Publisher (publicação de metadados no RabbitMQ)
 # Quando Redis habilitado: publica metadata JSON com redis_key

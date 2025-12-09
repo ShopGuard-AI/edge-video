@@ -47,6 +47,9 @@ type CameraStream struct {
 
 	// Graceful shutdown
 	wg sync.WaitGroup // Rastreia goroutines ativas
+
+	// Worker Pool: Semáforo para limitar goroutines de publish concorrentes (máximo 3)
+	publishSemaphore chan struct{}
 }
 
 // NewCameraStream cria câmera com buffers PRIVADOS e circuit breaker
@@ -67,6 +70,9 @@ func NewCameraStream(id, url string, fps, quality int, publisher *messaging.Publ
 
 		// CRÍTICO: Pool LOCAL de buffers (10 buffers dedicados para ESTA câmera)
 		bufferPool: make(chan []byte, 10),
+
+		// Worker Pool: Semáforo limitado a 3 goroutines concorrentes
+		publishSemaphore: make(chan struct{}, 3),
 	}
 
 	// Pre-aloca 10 buffers DEDICADOS para esta câmera
@@ -439,10 +445,24 @@ func (c *CameraStream) publishLoop() {
 		// CORREÇÃO CRÍTICA: NÃO precisa mais de frameCopy aqui!
 		// O frame JÁ É UMA CÓPIA INDEPENDENTE feita na linha 245
 
+		// WORKER POOL: Adquire slot no semáforo (máximo 3 goroutines concorrentes)
+		// Isso previne criação ilimitada de goroutines quando Redis está lento
+		select {
+		case c.publishSemaphore <- struct{}{}: // Adquire slot
+			// Slot adquirido, continua para publicação
+		case <-c.ctx.Done():
+			// Contexto cancelado enquanto aguardava slot
+			continue
+		}
+
 		// Publica ASSÍNCRONA (rastreada pelo publishWg)
 		publishWg.Add(1)
 		go func(cameraID string, frameData []byte, frameNum uint64, start time.Time) {
-			defer publishWg.Done()
+			// CRÍTICO: Libera slot do semáforo quando goroutine terminar
+			defer func() {
+				<-c.publishSemaphore // Libera slot
+				publishWg.Done()
+			}()
 
 			// Verifica se contexto foi cancelado antes de publicar
 			select {

@@ -36,6 +36,7 @@ type RedisConfig struct {
 	TTL        time.Duration `yaml:"ttl"`
 	MaxRetries int           `yaml:"max_retries"`
 	RetryDelay time.Duration `yaml:"retry_delay"`
+	Timeout    time.Duration `yaml:"timeout"`    // Timeout por operação (Store/Get)
 }
 
 // NewRedisClient cria novo cliente Redis
@@ -93,10 +94,16 @@ func (r *RedisClient) Store(cameraID string, frameData []byte, timestamp time.Ti
 		key = fmt.Sprintf("%s:%s:%d", r.config.Prefix, cameraID, timestamp.UnixNano())
 	}
 
+	// Timeout configurável (default 2s se não configurado)
+	timeout := r.config.Timeout
+	if timeout == 0 {
+		timeout = 2 * time.Second // Default: 2s (melhor que 5s hardcoded)
+	}
+
 	// Store com retry
 	var lastErr error
 	for i := 0; i < r.config.MaxRetries; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		err := r.client.Set(ctx, key, frameData, r.config.TTL).Err()
 		cancel()
 
@@ -144,7 +151,13 @@ func (r *RedisClient) Get(key string) ([]byte, error) {
 		return nil, fmt.Errorf("redis client disabled")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	// Timeout configurável (default 2s se não configurado)
+	timeout := r.config.Timeout
+	if timeout == 0 {
+		timeout = 2 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	r.mu.Lock()

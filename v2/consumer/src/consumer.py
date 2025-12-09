@@ -91,7 +91,8 @@ class EdgeVideoConsumer:
         self.channel: Optional[pika.channel.Channel] = None
         self.redis_client: Optional[redis.Redis] = None
 
-        # Statistics
+        # Statistics (thread-safe com lock)
+        self.stats_lock = threading.Lock()
         self.stats = {
             'total_consumed': 0,
             'total_success': 0,
@@ -185,15 +186,20 @@ class EdgeVideoConsumer:
                     durable=True
                 )
 
-                # Declare queue (idempotent)
+                # Declare queue (cria se não existir)
                 queue_result = self.channel.queue_declare(
                     queue=self.config['rabbitmq']['queue'],
                     durable=True,
-                    arguments={
-                        'x-max-length': 1,  # Max 1 mensagem (apenas frame mais recente)
-                        'x-overflow': 'drop-head'  # Descarta mensagem antiga quando nova chega
-                    }
+                    auto_delete=False
                 )
+
+                old_messages = queue_result.method.message_count
+
+                # PURGE mensagens antigas se configurado (evita dessincronização!)
+                if self.config['rabbitmq'].get('purge_on_start', False) and old_messages > 0:
+                    logger.warning(f"⚠️  PURGANDO {old_messages} mensagens antigas da fila...")
+                    purge_result = self.channel.queue_purge(queue=self.config['rabbitmq']['queue'])
+                    logger.info(f"✓ {purge_result.method.message_count} mensagens antigas removidas!")
 
                 # Bind queue to exchange
                 self.channel.queue_bind(
@@ -204,7 +210,13 @@ class EdgeVideoConsumer:
 
                 logger.info(f"✓ RabbitMQ connected - Queue: {self.config['rabbitmq']['queue']}")
                 logger.info(f"✓ QoS: prefetch_count={self.config['rabbitmq']['prefetch_count']}")
-                logger.info(f"✓ Messages in queue: {queue_result.method.message_count}")
+
+                # Verifica novamente quantas mensagens tem após purge
+                queue_check = self.channel.queue_declare(
+                    queue=self.config['rabbitmq']['queue'],
+                    passive=True
+                )
+                logger.info(f"✓ Messages in queue: {queue_check.method.message_count}")
 
                 frames_in_queue.set(queue_result.method.message_count)
                 rabbitmq_connection_status.set(1)
@@ -257,17 +269,10 @@ class EdgeVideoConsumer:
         start = time.time()
 
         try:
-            # Seleciona a primeira câmera que chegar
+            # Log primeira vez que processa esta câmera
             if self.selected_camera is None:
                 self.selected_camera = camera_id
                 logger.info(f"📹 Exibindo frames da câmera: {camera_id}")
-
-            # OTIMIZAÇÃO CRÍTICA: Pula frames de outras câmeras SEM processar!
-            if camera_id != self.selected_camera:
-                # Apenas valida rapidamente e retorna (sem decodificar!)
-                if frame_data.startswith(b'\xff\xd8') and frame_data.endswith(b'\xff\xd9'):
-                    return True
-                return False
 
             # Valida se é JPEG válido
             if not (frame_data.startswith(b'\xff\xd8') and frame_data.endswith(b'\xff\xd9')):
@@ -282,19 +287,20 @@ class EdgeVideoConsumer:
                 logger.warning(f"[{camera_id}] Failed to decode frame")
                 return False
 
-            # Calcula FPS
-            self.stats['fps_counter'] += 1
-            elapsed = time.time() - self.stats['fps_start_time']
-            if elapsed >= 1.0:  # Atualiza FPS a cada 1 segundo
-                self.stats['current_fps'] = self.stats['fps_counter'] / elapsed
-                self.stats['fps_counter'] = 0
-                self.stats['fps_start_time'] = time.time()
+            # Calcula FPS (thread-safe)
+            with self.stats_lock:
+                self.stats['fps_counter'] += 1
+                elapsed = time.time() - self.stats['fps_start_time']
+                if elapsed >= 1.0:  # Atualiza FPS a cada 1 segundo
+                    self.stats['current_fps'] = self.stats['fps_counter'] / elapsed
+                    self.stats['fps_counter'] = 0
+                    self.stats['fps_start_time'] = time.time()
 
-            # Calcula tempo médio de processamento
-            duration_ms = (time.time() - start) * 1000
-            self.stats['avg_processing_time'] = (
-                (self.stats['avg_processing_time'] * 0.9) + (duration_ms * 0.1)
-            )
+                # Calcula tempo médio de processamento
+                duration_ms = (time.time() - start) * 1000
+                self.stats['avg_processing_time'] = (
+                    (self.stats['avg_processing_time'] * 0.9) + (duration_ms * 0.1)
+                )
 
             # Dimensões do frame
             height, width = frame.shape[:2]
@@ -359,12 +365,21 @@ class EdgeVideoConsumer:
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, cam_color, 1)
                 x_offset += 120
 
+            # RESIZE para caber na tela (max width: 1280px mantendo proporção)
+            max_width = 1280
+            if width > max_width:
+                scale = max_width / width
+                new_width = max_width
+                new_height = int(height * scale)
+                frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+
             # EXIBE O FRAME na janela
             window_name = "Edge Video Consumer - Live View"
             cv2.imshow(window_name, frame)
 
-            # OTIMIZAÇÃO: cv2.waitKey só a cada 2 frames (reduz bloqueio no Windows)
-            if self.stats['fps_counter'] % 2 == 0:
+            # OTIMIZAÇÃO CRÍTICA: cv2.waitKey só a cada 5 frames (reduz bloqueio no Windows)
+            # Isso permite processar mais frames em paralelo
+            if self.stats['fps_counter'] % 5 == 0:
                 cv2.waitKey(1)  # Atualiza a janela
 
             # Opcionalmente, salva frame em disco
@@ -382,10 +397,21 @@ class EdgeVideoConsumer:
             duration = time.time() - start
             frames_processing_duration.labels(camera_id=camera_id).observe(duration)
 
+            # Atualiza estatísticas de sucesso (thread-safe)
+            with self.stats_lock:
+                self.stats['total_success'] += 1
+            frames_consumed_total.labels(camera_id=camera_id, status='success').inc()
+
             return True
 
         except Exception as e:
             logger.error(f"[{camera_id}] Processing error: {e}")
+
+            # Atualiza estatísticas de erro (thread-safe)
+            with self.stats_lock:
+                self.stats['total_errors'] += 1
+            frames_consumed_total.labels(camera_id=camera_id, status='error').inc()
+
             return False
 
     def _process_frame_worker(self, camera_id, frame_data, headers):
@@ -426,10 +452,29 @@ class EdgeVideoConsumer:
             camera_id = headers.get('camera_id', 'unknown')
             redis_key = headers.get('redis_key', '')
 
-            # Update stats
-            self.stats['total_consumed'] += 1
-            self.stats['camera_counts'][camera_id] = \
-                self.stats['camera_counts'].get(camera_id, 0) + 1
+            # CRITICAL: Verifica timestamp da mensagem (evita buscar chaves expiradas!)
+            # Se mensagem tem > 110s, redis_key já expirou (TTL: 120s)
+            msg_timestamp = properties.timestamp
+            if msg_timestamp:
+                # properties.timestamp pode ser int (Unix timestamp) ou datetime
+                if isinstance(msg_timestamp, int):
+                    # Timestamp Unix em segundos
+                    age_seconds = time.time() - msg_timestamp
+                else:
+                    # Objeto datetime
+                    age_seconds = time.time() - msg_timestamp.timestamp()
+
+                if age_seconds > 110:  # 110s = buffer de 10s antes do TTL (120s)
+                    logger.warning(f"[{camera_id}] Mensagem muito antiga ({age_seconds:.0f}s) - descartando")
+                    if not self.config['rabbitmq']['auto_ack']:
+                        ch.basic_ack(delivery_tag=method.delivery_tag)  # ACK mas descarta
+                    return
+
+            # Update stats (thread-safe)
+            with self.stats_lock:
+                self.stats['total_consumed'] += 1
+                self.stats['camera_counts'][camera_id] = \
+                    self.stats['camera_counts'].get(camera_id, 0) + 1
 
             # Log progress
             if self.stats['total_consumed'] % self.config['processing']['log_every_n'] == 0:
@@ -439,60 +484,65 @@ class EdgeVideoConsumer:
                            f"({fps:.1f} fps) - Success: {self.stats['total_success']}, "
                            f"Errors: {self.stats['total_errors']}")
 
-            # V1.6-STYLE: Redis é OBRIGATÓRIO
-            # Body agora contém apenas redis_key (string), NÃO o frame
+            # MODO HÍBRIDO: Suporta frame direto no body OU redis_key
+            # Backend devs já consomem frame binário direto do body!
             frame_data = None
 
-            # 1. Extrai redis_key do body (V1.6 style)
-            if not redis_key:
-                # Body agora é o redis_key (ex: "frames:cam1:1733681234567")
-                redis_key = body.decode('utf-8') if isinstance(body, bytes) else body
+            # 1. Tenta obter frame direto do BODY (modo atual - compatível com backend devs)
+            # Se body for grande (> 1000 bytes), assume que é frame binário JPEG
+            if len(body) > 1000:
+                # Body contém frame binário completo (50-300KB JPEG)
+                frame_data = body
+                logger.debug(f"[{camera_id}] Frame obtido do body ({len(body)} bytes)")
 
-            # 2. Valida que Redis está habilitado (obrigatório)
-            if not self.redis_client:
-                logger.error(f"[{camera_id}] Redis OBRIGATÓRIO mas está desabilitado no config!")
-                self.stats['total_errors'] += 1
-                self.stats['redis_misses'] += 1
-                # NACK imediato
-                if not self.config['rabbitmq']['auto_ack']:
-                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-                return
-
-            # 3. Busca frame do Redis (SEM FALLBACK para body!)
-            frame_data = self._fetch_from_redis(redis_key)
-            if frame_data:
-                self.stats['redis_hits'] += 1
+            # 2. Se body pequeno, pode ser redis_key (modo V1.6-style)
             else:
-                # SEM FALLBACK! Se não está no Redis, é ERRO (TTL expirado ou chave inválida)
-                self.stats['redis_misses'] += 1
-                logger.error(f"[{camera_id}] Frame NÃO encontrado no Redis (key: {redis_key}) - TTL expirado?")
-                self.stats['total_errors'] += 1
+                # Tenta decodificar como redis_key
+                try:
+                    redis_key_from_body = body.decode('utf-8') if isinstance(body, bytes) else body
+
+                    # Se Redis está habilitado, tenta buscar do Redis
+                    if self.redis_client:
+                        frame_data = self._fetch_from_redis(redis_key_from_body)
+                        if frame_data:
+                            with self.stats_lock:
+                                self.stats['redis_hits'] += 1
+                            logger.debug(f"[{camera_id}] Frame obtido do Redis (key: {redis_key_from_body})")
+                        else:
+                            with self.stats_lock:
+                                self.stats['redis_misses'] += 1
+                            logger.warning(f"[{camera_id}] Redis key não encontrado: {redis_key_from_body}")
+                    else:
+                        logger.warning(f"[{camera_id}] Redis desabilitado, mas body parece ser redis_key")
+
+                except UnicodeDecodeError:
+                    # Body não é UTF-8, assume que é frame binário pequeno
+                    frame_data = body
+                    logger.debug(f"[{camera_id}] Frame pequeno obtido do body ({len(body)} bytes)")
+
+            # 3. Verifica se conseguiu obter frame_data
+            if not frame_data:
+                logger.error(f"[{camera_id}] Não foi possível obter frame (body: {len(body)} bytes)")
+                with self.stats_lock:
+                    self.stats['total_errors'] += 1
                 # NACK message
                 if not self.config['rabbitmq']['auto_ack']:
                     ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
                 return
 
-            # PROCESSA frame (rápido - decodifica + exibe só se for câmera selecionada)
-            success = self._process_frame(camera_id, frame_data, headers)
+            # ✅ ACK IMEDIATO (não espera processamento - streaming em tempo real!)
+            # Isso maximiza throughput e evita bloqueio
+            if not self.config['rabbitmq']['auto_ack']:
+                ch.basic_ack(delivery_tag=method.delivery_tag)
 
-            if success:
-                self.stats['total_success'] += 1
-                frames_consumed_total.labels(camera_id=camera_id, status='success').inc()
-
-                # ACK message na thread principal (thread-safe!)
-                if not self.config['rabbitmq']['auto_ack']:
-                    ch.basic_ack(delivery_tag=method.delivery_tag)
-            else:
-                self.stats['total_errors'] += 1
-                frames_consumed_total.labels(camera_id=camera_id, status='error').inc()
-
-                # NACK message na thread principal
-                if not self.config['rabbitmq']['auto_ack']:
-                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            # 🚀 PROCESSA frame ASSINCRONAMENTE usando ThreadPoolExecutor
+            # Fire-and-forget: não espera resultado (streaming em tempo real)
+            self.executor.submit(self._process_frame, camera_id, frame_data, headers)
 
         except Exception as e:
             logger.error(f"[{camera_id}] Callback error: {e}")
-            self.stats['total_errors'] += 1
+            with self.stats_lock:
+                self.stats['total_errors'] += 1
             frames_consumed_total.labels(camera_id=camera_id, status='error').inc()
 
             # NACK em caso de erro
