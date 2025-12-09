@@ -61,15 +61,9 @@ func (p *PublishHealthMonitor) RecordSuccess() {
 	p.lastSuccess = time.Now()
 }
 
-// IsDegraded verifica se o estado de publish está degradado
-// Retorna true se:
-// - 80%+ de erros nos últimos N publishes
-// OU
-// - Sem sucesso há 30+ segundos
-func (p *PublishHealthMonitor) IsDegraded() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
+// isDegradedUnsafe verifica degradação SEM MUTEX (uso interno)
+// Deve ser chamado apenas quando o mutex já está sendo segurado
+func (p *PublishHealthMonitor) isDegradedUnsafe() bool {
 	// Calcula taxa de erro nos últimos N publishes
 	total := len(p.recentErrors) + len(p.recentSuccesses)
 	if total < p.windowSize {
@@ -86,16 +80,34 @@ func (p *PublishHealthMonitor) IsDegraded() bool {
 		time.Since(p.lastSuccess) > 30*time.Second
 }
 
-// IsEmergency verifica se está em estado de emergência
+// IsDegraded verifica se o estado de publish está degradado (thread-safe)
+// Retorna true se:
+// - 80%+ de erros nos últimos N publishes
+// OU
+// - Sem sucesso há 30+ segundos
+func (p *PublishHealthMonitor) IsDegraded() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.isDegradedUnsafe()
+}
+
+// isEmergencyUnsafe verifica emergência SEM MUTEX (uso interno)
+// Deve ser chamado apenas quando o mutex já está sendo segurado
+func (p *PublishHealthMonitor) isEmergencyUnsafe() bool {
+	return p.consecutiveFails > 20
+}
+
+// IsEmergency verifica se está em estado de emergência (thread-safe)
 // Retorna true se houve muitos failures consecutivos (>20)
 func (p *PublishHealthMonitor) IsEmergency() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	return p.consecutiveFails > 20
+	return p.isEmergencyUnsafe()
 }
 
-// GetStats retorna estatísticas atuais
+// GetStats retorna estatísticas atuais (thread-safe)
 func (p *PublishHealthMonitor) GetStats() HealthStats {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -113,8 +125,8 @@ func (p *PublishHealthMonitor) GetStats() HealthStats {
 		ConsecutiveFails: p.consecutiveFails,
 		ErrorRate:        errorRate,
 		LastSuccess:      p.lastSuccess,
-		IsDegraded:       p.IsDegraded(),
-		IsEmergency:      p.IsEmergency(),
+		IsDegraded:       p.isDegradedUnsafe(),   // ✅ USA VERSÃO SEM MUTEX (mutex já está sendo segurado)
+		IsEmergency:      p.isEmergencyUnsafe(),  // ✅ USA VERSÃO SEM MUTEX (mutex já está sendo segurado)
 	}
 }
 
