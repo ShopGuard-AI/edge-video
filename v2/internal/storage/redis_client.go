@@ -145,6 +145,102 @@ func (r *RedisClient) Store(cameraID string, frameData []byte, timestamp time.Ti
 	return "", fmt.Errorf("redis store failed after %d attempts: %w", r.config.MaxRetries, lastErr)
 }
 
+// StoreWithContext armazena frame no Redis respeitando contexto do caller
+// Se o contexto for cancelado, retorna imediatamente
+func (r *RedisClient) StoreWithContext(ctx context.Context, cameraID string, frameData []byte, timestamp time.Time) (string, error) {
+	if r == nil {
+		return "", fmt.Errorf("redis client disabled")
+	}
+
+	// Verifica se contexto já foi cancelado antes de começar
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
+	}
+
+	start := time.Now()
+
+	// Gera chave: supercarlao_rj_mercado:frames:cam1:1701878400123456789
+	// Formato: vhost:prefix:camera:timestamp
+	var key string
+	if r.config.Vhost != "" {
+		key = fmt.Sprintf("%s:%s:%s:%d", r.config.Vhost, r.config.Prefix, cameraID, timestamp.UnixNano())
+	} else {
+		// Fallback: sem vhost (compatibilidade com config antigo)
+		key = fmt.Sprintf("%s:%s:%d", r.config.Prefix, cameraID, timestamp.UnixNano())
+	}
+
+	// Timeout configurável (default 2s se não configurado)
+	timeout := r.config.Timeout
+	if timeout == 0 {
+		timeout = 2 * time.Second // Default: 2s
+	}
+
+	// Store com retry (respeitando contexto do caller)
+	var lastErr error
+	for i := 0; i < r.config.MaxRetries; i++ {
+		// Verifica se contexto foi cancelado antes de retry
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+
+		// Cria timeout context derivado do contexto do caller
+		timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+		err := r.client.Set(timeoutCtx, key, frameData, r.config.TTL).Err()
+		cancel()
+
+		if err == nil {
+			// Sucesso
+			duration := time.Since(start)
+
+			r.mu.Lock()
+			r.storeCount++
+			r.mu.Unlock()
+
+			// Registra métrica Prometheus
+			monitoring.TrackRedisStore(cameraID, duration, true)
+
+			if r.storeCount%100 == 0 {
+				log.Printf("[Redis] Stored %d frames, Last: %s (%v, %d bytes)",
+					r.storeCount, key, duration, len(frameData))
+			}
+
+			return key, nil
+		}
+
+		lastErr = err
+
+		// Se contexto foi cancelado, não tenta retry
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+
+		// Aguarda retry delay (interruptível por context)
+		if i < r.config.MaxRetries-1 {
+			select {
+			case <-time.After(r.config.RetryDelay):
+				// Continue para próximo retry
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+	}
+
+	// Falhou após retries
+	duration := time.Since(start)
+	r.mu.Lock()
+	r.storeErrors++
+	r.mu.Unlock()
+
+	// Registra métrica Prometheus de erro
+	monitoring.TrackRedisStore(cameraID, duration, false)
+
+	return "", fmt.Errorf("redis store failed after %d attempts: %w", r.config.MaxRetries, lastErr)
+}
+
 // Get recupera frame do Redis
 func (r *RedisClient) Get(key string) ([]byte, error) {
 	if r == nil {

@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -349,6 +350,140 @@ func (p *Publisher) Publish(cameraID string, frameData []byte, timestamp time.Ti
 		p.publishErrors++
 		p.mu.Unlock()
 		return fmt.Errorf("[%s] Redis store FALHOU (obrigatório): %w", cameraID, storeErr)
+	}
+
+	// 4. RABBITMQ PUBLISH (PARALELO - channel.Publish() é thread-safe!)
+	// V1.6-STYLE: Envia apenas redis_key no body, NÃO o frame completo
+	// Isso reduz drasticamente o tamanho da mensagem (316KB → ~50 bytes)
+
+	// Calcula TTL da mensagem (mesmo TTL do Redis para consistência)
+	var ttlMs string
+	if p.redisClient != nil {
+		ttlMs = fmt.Sprintf("%d", int64(p.redisClient.GetTTL().Milliseconds()))
+	}
+
+	startRabbit := time.Now()
+	err := channel.Publish(
+		p.exchange,
+		routingKey,
+		false, // mandatory
+		false, // immediate
+		amqp.Publishing{
+			ContentType:  "text/plain",
+			Body:         []byte(redisKey), // Apenas redis_key (ex: "frames:cam1:1733681234567")
+			Timestamp:    timestamp,
+			DeliveryMode: amqp.Transient, // Não persiste (mais rápido)
+			Expiration:   ttlMs,          // TTL da mensagem (igual ao Redis: 120s = 120000ms)
+			Headers: amqp.Table{
+				"camera_id": cameraID,
+				"redis_key": redisKey,
+			},
+		},
+	)
+	rabbitTime := time.Since(startRabbit)
+	totalTime := time.Since(startTotal)
+
+	// 5. Atualiza contadores (lock mínimo)
+	p.mu.Lock()
+	if err != nil {
+		p.publishErrors++
+		p.connected = false
+		p.mu.Unlock()
+
+		// Trigger reconexão
+		go p.reconnect()
+
+		return fmt.Errorf("falha ao publicar: %w", err)
+	}
+
+	p.publishCount++
+	count := p.publishCount
+	p.mu.Unlock()
+
+	// 6. Log de timing detalhado a cada 100 frames
+	if count%100 == 0 {
+		log.Printf("[%s] Frame #%d | Total: %v | Redis: %v | RabbitMQ: %v",
+			cameraID, count, totalTime, redisTime, rabbitTime)
+	}
+
+	return nil
+}
+
+// PublishWithContext publica um frame no RabbitMQ com context awareness
+// Se o contexto for cancelado, retorna imediatamente sem tentar publish
+func (p *Publisher) PublishWithContext(ctx context.Context, cameraID string, frameData []byte, timestamp time.Time) error {
+	// Verifica se contexto já foi cancelado antes de começar
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	startTotal := time.Now()
+
+	// 1. Verifica conexão (lock mínimo)
+	p.mu.Lock()
+	if !p.connected {
+		p.publishErrors++
+		p.mu.Unlock()
+		return fmt.Errorf("não conectado ao RabbitMQ")
+	}
+	routingKey := p.routingKey
+	channel := p.channel
+	shouldDebug := p.publishCount < 18
+	p.mu.Unlock()
+
+	// DEBUG: Log detalhado de publicação (primeiros 18 frames)
+	if shouldDebug {
+		log.Printf("[PUBLISH DEBUG] Camera: %s, RoutingKey: %s, Size: %d bytes, Header[camera_id]: %s",
+			cameraID, routingKey, len(frameData), cameraID)
+	}
+
+	// Verifica contexto antes de operações pesadas
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	// 2. CÓPIA DEFENSIVA (fora de qualquer lock)
+	frameDataCopy := make([]byte, len(frameData))
+	copy(frameDataCopy, frameData)
+
+	// 3. REDIS STORE (OBRIGATÓRIO - com context awareness!)
+	// V1.6-STYLE: Redis é MANDATÓRIO pois apenas redis_key é enviado ao RabbitMQ
+	var redisKey string
+	var redisTime time.Duration
+	if p.redisClient == nil || !p.redisClient.IsEnabled() {
+		p.mu.Lock()
+		p.publishErrors++
+		p.mu.Unlock()
+		return fmt.Errorf("Redis OBRIGATÓRIO para V1.6-style publishing (redis_enabled=false no config)")
+	}
+
+	startRedis := time.Now()
+	var storeErr error
+	// ✅ USA STOREWITCONTEXT para respeitar cancelamento!
+	redisKey, storeErr = p.redisClient.StoreWithContext(ctx, cameraID, frameDataCopy, timestamp)
+	redisTime = time.Since(startRedis)
+
+	if storeErr != nil {
+		// Se falhou por cancelamento de contexto, retorna ctx.Err()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		p.mu.Lock()
+		p.publishErrors++
+		p.mu.Unlock()
+		return fmt.Errorf("[%s] Redis store FALHOU (obrigatório): %w", cameraID, storeErr)
+	}
+
+	// Verifica contexto antes de RabbitMQ publish
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
 	}
 
 	// 4. RABBITMQ PUBLISH (PARALELO - channel.Publish() é thread-safe!)

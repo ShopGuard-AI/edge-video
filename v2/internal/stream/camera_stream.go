@@ -524,7 +524,8 @@ func (c *CameraStream) publishLoop() {
 			default:
 			}
 
-			err := c.publisher.Publish(cameraID, frameData, start)
+			// ✅ USA PUBLISHWITHCONTEXT para respeitar cancelamento imediato!
+			err := c.publisher.PublishWithContext(c.ctx, cameraID, frameData, start)
 			publishDuration := time.Since(start)
 			monitoring.TrackPublish(publishDuration)
 
