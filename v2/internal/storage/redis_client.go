@@ -46,6 +46,23 @@ func NewRedisClient(config RedisConfig) (*RedisClient, error) {
 		return nil, nil
 	}
 
+	// Aplica defaults para valores não configurados
+	if config.MaxRetries == 0 {
+		config.MaxRetries = 3 // Default: 3 tentativas
+	}
+	if config.RetryDelay == 0 {
+		config.RetryDelay = 100 * time.Millisecond // Default: 100ms
+	}
+	if config.Timeout == 0 {
+		config.Timeout = 2 * time.Second // Default: 2s
+	}
+	if config.TTL == 0 {
+		config.TTL = 120 * time.Second // Default: 120s (2 minutos)
+	}
+	if config.Prefix == "" {
+		config.Prefix = "frames" // Default: "frames"
+	}
+
 	log.Printf("Conectando ao Redis: %s (DB: %d)...", config.Address, config.DB)
 
 	rdb := redis.NewClient(&redis.Options{

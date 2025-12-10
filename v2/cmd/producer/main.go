@@ -46,7 +46,7 @@ func main() {
 		len(cfg.Cameras), cfg.FPS, cfg.Quality)
 
 	// Inicia Prometheus metrics server
-	metricsServer := monitoring.InitMetricsServer(2112) // Porta padrão Prometheus
+	metricsServer := monitoring.InitMetricsServer(cfg.Monitoring.MetricsPort, cfg.Monitoring.AutoPort)
 
 	// Inicializa Redis client (se habilitado)
 	redisClient, err := storage.NewRedisClient(cfg.Redis)
@@ -62,11 +62,41 @@ func main() {
 
 	// Inicia pprof HTTP server para debugging de goroutines
 	go func() {
-		log.Println("🔬 pprof server rodando em http://localhost:6060/debug/pprof/")
-		log.Println("   Para ver goroutines: http://localhost:6060/debug/pprof/goroutine?debug=1")
-		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
-			log.Printf("⚠️  pprof server falhou: %v", err)
+		pprofPort := cfg.Monitoring.PprofPort
+		autoPort := cfg.Monitoring.AutoPort
+		maxRetries := 10
+
+		for i := 0; i < maxRetries; i++ {
+			addr := fmt.Sprintf("localhost:%d", pprofPort)
+
+			if i == 0 {
+				log.Printf("🔬 pprof server rodando em http://%s/debug/pprof/", addr)
+				log.Printf("   Para ver goroutines: http://%s/debug/pprof/goroutine?debug=1", addr)
+			} else if i > 0 {
+				log.Printf("✓ pprof usando porta alternativa: http://%s/debug/pprof/", addr)
+			}
+
+			err := http.ListenAndServe(addr, nil)
+
+			// Se não há erro, servidor parou por alguma razão - retornar
+			if err == nil {
+				return
+			}
+
+			// Se autoPort desabilitado, loga erro e retorna
+			if !autoPort {
+				log.Printf("⚠️  pprof server falhou: %v", err)
+				return
+			}
+
+			// Se autoPort habilitado, tenta próxima porta
+			if i < maxRetries-1 {
+				log.Printf("⚠️  Porta %d ocupada, tentando pprof na porta %d...", pprofPort, pprofPort+1)
+				pprofPort++
+			}
 		}
+
+		log.Printf("❌ Falha ao iniciar pprof server após %d tentativas", maxRetries)
 	}()
 
 	// Cria e inicia câmeras usando FFmpeg stream

@@ -32,12 +32,7 @@ func TestSingleCameraRTMP(t *testing.T) {
 
 	// Criar config temporário com apenas cam1
 	tempConfig := config
-	tempConfig.Cameras = []struct {
-		ID  string `yaml:"id"`
-		URL string `yaml:"url"`
-	}{
-		{ID: "cam1", URL: config.Cameras[0].URL},
-	}
+	tempConfig.Cameras = config.Cameras[:1] // Mantém apenas primeira câmera com TODA a config
 
 	// Salvar config temporário
 	tempConfigData, err := yaml.Marshal(tempConfig)
@@ -179,12 +174,7 @@ func TestSingleCameraRTSP(t *testing.T) {
 	}
 
 	tempConfig := config
-	tempConfig.Cameras = []struct {
-		ID  string `yaml:"id"`
-		URL string `yaml:"url"`
-	}{
-		{ID: "cam2", URL: config.Cameras[1].URL},
-	}
+	tempConfig.Cameras = config.Cameras[1:2] // Mantém apenas segunda câmera com TODA a config
 
 	// Salvar config temporário
 	tempConfigData, err := yaml.Marshal(tempConfig)

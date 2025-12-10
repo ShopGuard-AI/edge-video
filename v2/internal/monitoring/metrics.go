@@ -19,6 +19,7 @@ import (
 // MetricsServer gerencia exposição de métricas Prometheus
 type MetricsServer struct {
 	port     int
+	autoPort bool // Se true, tenta portas alternativas se ocupadas
 	mu       sync.RWMutex
 	cameras  map[string]*CameraMetrics
 	registry *prometheus.Registry
@@ -129,10 +130,11 @@ var (
 )
 
 // InitMetricsServer inicializa servidor de métricas Prometheus
-func InitMetricsServer(port int) *MetricsServer {
+func InitMetricsServer(port int, autoPort bool) *MetricsServer {
 	metricsOnce.Do(func() {
 		metricsServer = &MetricsServer{
 			port:     port,
+			autoPort: autoPort,
 			cameras:  make(map[string]*CameraMetrics),
 			registry: prometheus.NewRegistry(),
 		}
@@ -151,13 +153,17 @@ func InitMetricsServer(port int) *MetricsServer {
 			uptimeSeconds,
 		)
 
-		// Inicia servidor HTTP
+		// Inicia servidor HTTP (em background)
 		go metricsServer.serve()
 
 		// Inicia collector de métricas do sistema
 		go metricsServer.collectSystemMetrics()
 
-		log.Printf("📊 Prometheus metrics server rodando em http://localhost:%d/metrics", port)
+		if autoPort {
+			log.Printf("📊 Prometheus metrics server iniciando (porta: %d, auto-port: enabled)...", port)
+		} else {
+			log.Printf("📊 Prometheus metrics server rodando em http://localhost:%d/metrics", port)
+		}
 	})
 
 	return metricsServer
@@ -378,10 +384,46 @@ func (ms *MetricsServer) serve() {
 		fmt.Fprintf(w, "OK")
 	})
 
-	addr := fmt.Sprintf(":%d", ms.port)
-	if err := http.ListenAndServe(addr, nil); err != nil {
-		log.Printf("❌ Erro ao iniciar metrics server: %v", err)
+	// Tenta iniciar servidor com retry se autoPort habilitado
+	port := ms.port
+	maxRetries := 10
+
+	for i := 0; i < maxRetries; i++ {
+		addr := fmt.Sprintf(":%d", port)
+
+		// Log de sucesso ANTES de bloquear (ListenAndServe bloqueia a goroutine)
+		if i > 0 {
+			log.Printf("✓ Metrics server usando porta alternativa: http://localhost:%d/metrics", port)
+		} else if !ms.autoPort {
+			// Primeira tentativa sem autoPort - já logado em InitMetricsServer
+		} else {
+			log.Printf("✓ Metrics server rodando em http://localhost:%d/metrics", port)
+		}
+
+		err := http.ListenAndServe(addr, nil)
+
+		if err == nil {
+			// Sucesso!
+			return
+		}
+
+		// Se erro e autoPort desabilitado, loga erro e retorna
+		if !ms.autoPort {
+			log.Printf("❌ Erro ao iniciar metrics server na porta %d: %v", port, err)
+			return
+		}
+
+		// Se autoPort habilitado, tenta próxima porta
+		log.Printf("⚠️  Porta %d ocupada, tentando porta %d...", port, port+1)
+		port++
+
+		// Atualiza porta no struct para outros métodos saberem qual porta foi usada
+		ms.mu.Lock()
+		ms.port = port
+		ms.mu.Unlock()
 	}
+
+	log.Printf("❌ Falha ao iniciar metrics server após %d tentativas", maxRetries)
 }
 
 // Funções auxiliares para atualizar métricas globais

@@ -122,20 +122,26 @@ func (p *Publisher) connect() error {
 		return fmt.Errorf("falha ao criar canal: %w", err)
 	}
 
-	// Declara exchange
-	err = p.channel.ExchangeDeclare(
-		p.exchange,
-		"topic",
-		true,  // durable
-		false, // auto-deleted
-		false, // internal
-		false, // no-wait
-		nil,   // arguments
-	)
-	if err != nil {
-		p.channel.Close()
-		p.conn.Close()
-		return fmt.Errorf("falha ao declarar exchange: %w", err)
+	// Declara exchange APENAS se não for o default exchange
+	// Default exchange ("") é built-in do RabbitMQ e não pode ser declarado
+	if p.exchange != "" {
+		err = p.channel.ExchangeDeclare(
+			p.exchange,
+			"topic",
+			true,  // durable
+			false, // auto-deleted
+			false, // internal
+			false, // no-wait
+			nil,   // arguments
+		)
+		if err != nil {
+			p.channel.Close()
+			p.conn.Close()
+			return fmt.Errorf("falha ao declarar exchange: %w", err)
+		}
+		log.Printf("✓ Exchange declarado: %s (type: topic, durable: true)", p.exchange)
+	} else {
+		log.Printf("⚠️  Usando default exchange (direto para queue via routing_key)")
 	}
 
 	// CONFIGURA QoS (Quality of Service)

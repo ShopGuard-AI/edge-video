@@ -52,6 +52,13 @@ metadata:
   enabled: false               # Publica metadados JSON separados (true/false)
   include_redis_key: true      # Incluir redis_key nos metadados (se redis enabled)
 
+# Monitoring (portas de serviços de monitoramento)
+# auto_port: se true, tenta portas alternativas se a configurada estiver ocupada
+monitoring:
+  metrics_port: 2112          # Porta do Prometheus metrics (default: 2112)
+  pprof_port: 6060            # Porta do pprof debug (default: 6060)
+  auto_port: true             # Tenta portas alternativas se ocupadas (útil para E2E tests)
+
 # Câmeras com configuração INDIVIDUAL de exchange e routing_key
 cameras:
   # Mercado Autônomo (RTMP)

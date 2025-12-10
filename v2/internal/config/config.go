@@ -20,7 +20,15 @@ type Config struct {
 	MemoryController memory.MemoryControllerConfig    `yaml:"memory_controller"`
 	Redis            storage.RedisConfig              `yaml:"redis"`
 	Metadata         MetadataConfig                   `yaml:"metadata"`
+	Monitoring       MonitoringConfig                 `yaml:"monitoring"`
 	Cameras          []CamConfig                      `yaml:"cameras"`
+}
+
+// MonitoringConfig configuração de portas de monitoramento
+type MonitoringConfig struct {
+	MetricsPort int  `yaml:"metrics_port"` // Porta do Prometheus metrics (default: 2112)
+	PprofPort   int  `yaml:"pprof_port"`   // Porta do pprof debug (default: 6060)
+	AutoPort    bool `yaml:"auto_port"`    // Se true, tenta portas alternativas se ocupadas
 }
 
 // MetadataConfig configuração de publicação de metadados
@@ -93,6 +101,15 @@ func LoadConfig(filename string) (*Config, error) {
 			return nil, fmt.Errorf("erro na configuração de memory_controller: %w", err)
 		}
 	}
+
+	// Se monitoring não configurado, usa defaults
+	if config.Monitoring.MetricsPort == 0 {
+		config.Monitoring.MetricsPort = 2112 // Porta padrão Prometheus
+	}
+	if config.Monitoring.PprofPort == 0 {
+		config.Monitoring.PprofPort = 6060 // Porta padrão pprof
+	}
+	// auto_port é false por padrão (já é zero value)
 
 	return &config, nil
 }
