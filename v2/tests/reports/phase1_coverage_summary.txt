@@ -1,0 +1,4 @@
+ok  	edge-video/v2/internal/resilience	65.493s	coverage: 90.1% of statements
+ok  	edge-video/v2/internal/storage	2.511s	coverage: 15.1% of statements
+ok  	edge-video/v2/internal/messaging	2.394s	coverage: 21.7% of statements
+ok  	edge-video/v2/internal/health	2.870s	coverage: 100.0% of statements

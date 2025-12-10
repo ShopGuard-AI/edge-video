@@ -1,0 +1,70 @@
+=== RUN   TestNewCircuitBreaker
+    circuit_breaker_test.go:47: ✅ Circuit Breaker criado corretamente com config customizado
+--- PASS: TestNewCircuitBreaker (0.00s)
+=== RUN   TestNewCircuitBreakerDefaults
+    circuit_breaker_test.go:77: ✅ Valores padrão aplicados corretamente
+--- PASS: TestNewCircuitBreakerDefaults (0.00s)
+=== RUN   TestExecuteDisabled
+    circuit_breaker_test.go:112: ✅ Circuit Breaker desabilitado executa função sem proteção
+--- PASS: TestExecuteDisabled (0.00s)
+=== RUN   TestStateTransitionClosedToOpen
+🔴 Circuit Breaker [test-closed-to-open]: CLOSED → OPEN (falhas: 3, backoff: 1s)
+    circuit_breaker_test.go:153: ✅ Transição CLOSED → OPEN funciona corretamente
+--- PASS: TestStateTransitionClosedToOpen (0.00s)
+=== RUN   TestRejectionWhenOpen
+🔴 Circuit Breaker [test-rejection]: CLOSED → OPEN (falhas: 2, backoff: 5s)
+    circuit_breaker_test.go:195: ✅ Requests bloqueados corretamente quando OPEN (rejected: 1)
+--- PASS: TestRejectionWhenOpen (0.00s)
+=== RUN   TestStateTransitionOpenToHalfOpen
+🔴 Circuit Breaker [test-open-to-halfopen]: CLOSED → OPEN (falhas: 2, backoff: 100ms)
+    circuit_breaker_test.go:228: Expected state HALF_OPEN or CLOSED after backoff, got OPEN
+    circuit_breaker_test.go:231: ✅ Transição OPEN → HALF_OPEN funciona após backoff
+--- FAIL: TestStateTransitionOpenToHalfOpen (0.15s)
+=== RUN   TestStateTransitionHalfOpenToClosed
+🔴 Circuit Breaker [test-halfopen-to-closed]: CLOSED → OPEN (falhas: 2, backoff: 100ms)
+    circuit_breaker_test.go:259: Estado após 1º sucesso: OPEN (consecutiveSuccesses=0)
+    circuit_breaker_test.go:266: Expected state CLOSED after 2 successes in HALF_OPEN, got OPEN
+    circuit_breaker_test.go:273: Expected backoff reset to 100ms, got 200ms
+    circuit_breaker_test.go:276: ✅ Transição HALF_OPEN → CLOSED funciona após sucessos
+--- FAIL: TestStateTransitionHalfOpenToClosed (0.15s)
+=== RUN   TestStateTransitionHalfOpenToOpen
+🔴 Circuit Breaker [test-halfopen-to-open]: CLOSED → OPEN (falhas: 2, backoff: 1s)
+    circuit_breaker_test.go:302: Backoff após 1ª abertura: 2s
+🟡 Circuit Breaker [test-halfopen-to-open]: OPEN → HALF_OPEN (tentando recuperar...)
+🔴 Circuit Breaker [test-halfopen-to-open]: HALF_OPEN → OPEN (falhas: 1, backoff: 2s)
+    circuit_breaker_test.go:326: ✅ Transição HALF_OPEN → OPEN funciona em caso de falha
+--- PASS: TestStateTransitionHalfOpenToOpen (2.05s)
+=== RUN   TestExponentialBackoff
+🔴 Circuit Breaker [test-backoff]: CLOSED → OPEN (falhas: 2, backoff: 1s)
+🟡 Circuit Breaker [test-backoff]: OPEN → HALF_OPEN (tentando recuperar...)
+🔴 Circuit Breaker [test-backoff]: HALF_OPEN → OPEN (falhas: 3, backoff: 2s)
+🟡 Circuit Breaker [test-backoff]: OPEN → HALF_OPEN (tentando recuperar...)
+🔴 Circuit Breaker [test-backoff]: HALF_OPEN → OPEN (falhas: 4, backoff: 4s)
+🟡 Circuit Breaker [test-backoff]: OPEN → HALF_OPEN (tentando recuperar...)
+🔴 Circuit Breaker [test-backoff]: HALF_OPEN → OPEN (falhas: 5, backoff: 8s)
+🟡 Circuit Breaker [test-backoff]: OPEN → HALF_OPEN (tentando recuperar...)
+🔴 Circuit Breaker [test-backoff]: HALF_OPEN → OPEN (falhas: 6, backoff: 16s)
+🟡 Circuit Breaker [test-backoff]: OPEN → HALF_OPEN (tentando recuperar...)
+🔴 Circuit Breaker [test-backoff]: HALF_OPEN → OPEN (falhas: 7, backoff: 32s)
+    circuit_breaker_test.go:357: Backoff progression: [2s 4s 8s 16s 32s 1m0s]
+    circuit_breaker_test.go:372: ✅ Backoff exponencial funciona corretamente
+--- PASS: TestExponentialBackoff (62.05s)
+=== RUN   TestReset
+🔴 Circuit Breaker [test-reset]: CLOSED → OPEN (falhas: 2, backoff: 5s)
+🔄 Circuit Breaker [test-reset]: RESET manual para CLOSED
+    circuit_breaker_test.go:411: ✅ Reset manual funciona corretamente
+--- PASS: TestReset (0.00s)
+=== RUN   TestConcurrentAccess
+    circuit_breaker_test.go:458: ❌ TIMEOUT! Possível deadlock detectado
+--- FAIL: TestConcurrentAccess (5.00s)
+=== RUN   TestStats
+    circuit_breaker_test.go:529: Stats: CircuitBreaker[test-stats]: CLOSED | Failures: 2/5 | Successes: 0 | Backoff: 1s | Calls: 5 (✓3 ✗2 🚫0) | Changes: 0
+    circuit_breaker_test.go:530: ✅ Estatísticas rastreadas corretamente
+--- PASS: TestStats (0.00s)
+=== RUN   TestCircuitStateString
+    circuit_breaker_test.go:553: ✅ CircuitState.String() funciona corretamente
+--- PASS: TestCircuitStateString (0.00s)
+FAIL
+coverage: 90.1% of statements
+FAIL	edge-video/v2/internal/resilience	70.669s
+FAIL

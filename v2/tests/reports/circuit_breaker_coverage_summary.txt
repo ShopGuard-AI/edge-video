@@ -1,0 +1,17 @@
+edge-video/v2/internal/resilience/circuit_breaker.go:22:	String				0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:47:	DefaultCircuitBreakerConfig	0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:81:	NewCircuitBreaker		0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:106:	Execute				0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:139:	allowRequest			0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:173:	onSuccess			0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:200:	onFailure			0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:226:	transitionTo			0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:253:	increaseBackoff			0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:261:	timeUntilRetry			0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:280:	State				0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:287:	IsOpen				0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:292:	IsClosed			0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:297:	Reset				0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:337:	Stats				0.0%
+edge-video/v2/internal/resilience/circuit_breaker.go:364:	String				0.0%
+total:								(statements)			0.0%
