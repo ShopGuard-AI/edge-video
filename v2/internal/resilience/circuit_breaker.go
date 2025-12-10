@@ -136,35 +136,44 @@ func (cb *CircuitBreaker) Execute(fn func() error) error {
 }
 
 // allowRequest verifica se request pode ser executado
+// CRITICAL FIX: Removido defer RUnlock() para evitar deadlock
+// Problema: defer + manual unlock + RLock causava deadlock em concorrência
 func (cb *CircuitBreaker) allowRequest() bool {
 	cb.mu.RLock()
-	defer cb.mu.RUnlock()
 
 	switch cb.state {
 	case StateClosed:
 		// Estado normal, permite tudo
+		cb.mu.RUnlock()
 		return true
 
 	case StateOpen:
 		// Circuito aberto, verifica se já passou o backoff
 		if time.Since(cb.lastFailureTime) >= cb.currentBackoff {
 			// Tempo de tentar novamente (vai para HALF_OPEN)
-			cb.mu.RUnlock()
-			cb.mu.Lock()
-			if cb.state == StateOpen { // Double-check
+			cb.mu.RUnlock() // Libera read lock ANTES de pegar write lock
+
+			cb.mu.Lock() // Pega write lock para transição
+			if cb.state == StateOpen { // Double-check após pegar lock
 				cb.transitionTo(StateHalfOpen)
 			}
-			cb.mu.Unlock()
-			cb.mu.RLock()
+			cb.mu.Unlock() // Libera write lock
+
+			// IMPORTANTE: Retorna SEM RLock novamente!
+			// RLock aqui causava deadlock se outro thread estivesse esperando Lock()
+			// porque RWMutex dá prioridade para writers na fila
 			return true
 		}
+		cb.mu.RUnlock()
 		return false
 
 	case StateHalfOpen:
 		// Em HALF_OPEN, permite requests limitados
+		cb.mu.RUnlock()
 		return true
 
 	default:
+		cb.mu.RUnlock()
 		return false
 	}
 }
@@ -212,13 +221,14 @@ func (cb *CircuitBreaker) onFailure() {
 		if cb.failures >= cb.config.MaxFailures {
 			// Abre circuito!
 			cb.transitionTo(StateOpen)
-			cb.increaseBackoff()
+			// NÃO aumenta backoff na primeira abertura - usa InitialBackoff
+			// (currentBackoff já foi inicializado com InitialBackoff no construtor)
 		}
 
 	case StateHalfOpen:
 		// Falha em HALF_OPEN, volta para OPEN
 		cb.transitionTo(StateOpen)
-		cb.increaseBackoff()
+		cb.increaseBackoff() // Aumenta backoff exponencialmente em re-aberturas
 	}
 }
 
