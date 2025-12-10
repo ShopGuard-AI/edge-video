@@ -81,8 +81,8 @@ cameras:
     exchange: "supercarlao_rj_mercado.exchange"
     routing_key: "supercarlao_rj_mercado.cam5"
 
-  - id: "cam6"
-    url: "rtsp://pixforce:pixforce1234@186.193.228.105:12554/cam/realmonitor?channel=banana"
-    exchange: "supercarlao_rj_mercado.exchange"
-    routing_key: "supercarlao_rj_mercado.cam6"
+  # - id: "cam6"
+  #   url: "rtsp://pixforce:pixforce1234@186.193.228.105:12554/cam/realmonitor?channel=banana"
+  #   exchange: "supercarlao_rj_mercado.exchange"
+  #   routing_key: "supercarlao_rj_mercado.cam6"
   
