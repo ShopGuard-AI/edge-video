@@ -1,0 +1,9 @@
+goos: windows
+goarch: amd64
+pkg: edge-video/v2/internal/health
+cpu: 13th Gen Intel(R) Core(TM) i5-13450HX
+BenchmarkGetStats-16              	67510167	        18.48 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRecordSuccess-16         	43523518	        24.85 ns/op	      47 B/op	       0 allocs/op
+BenchmarkConcurrentGetStats-16    	21208832	        56.93 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	edge-video/v2/internal/health	6.199s
