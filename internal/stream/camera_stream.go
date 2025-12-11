@@ -6,7 +6,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +18,30 @@ import (
 	"edge-video/v2/internal/monitoring"
 	"edge-video/v2/internal/resilience"
 )
+
+// findFFmpegPath procura FFmpeg no diretório local primeiro, depois no PATH
+func findFFmpegPath() string {
+	// 1. Procura no mesmo diretório do executável
+	exePath, err := os.Executable()
+	if err == nil {
+		exeDir := filepath.Dir(exePath)
+		localFFmpeg := filepath.Join(exeDir, "ffmpeg.exe")
+		if _, err := os.Stat(localFFmpeg); err == nil {
+			log.Printf("✓ FFmpeg encontrado localmente: %s", localFFmpeg)
+			return localFFmpeg
+		}
+	}
+
+	// 2. Procura no diretório de trabalho atual
+	if _, err := os.Stat("./ffmpeg.exe"); err == nil {
+		log.Printf("✓ FFmpeg encontrado no diretório atual: ./ffmpeg.exe")
+		return "./ffmpeg.exe"
+	}
+
+	// 3. Usa PATH do sistema
+	log.Printf("✓ Usando FFmpeg do PATH do sistema")
+	return "ffmpeg"
+}
 
 // CameraStream usa FFmpeg em modo stream contínuo
 // VERSÃO CORRIGIDA: Cada câmera tem seus PRÓPRIOS buffers (sem sync.Pool compartilhado)
@@ -233,7 +259,9 @@ func (c *CameraStream) startFFmpeg() {
 	isRTSP := strings.HasPrefix(strings.ToLower(c.URL), "rtsp://") ||
 	          strings.HasPrefix(strings.ToLower(c.URL), "rtsps://")
 
-	args := []string{"ffmpeg"}
+	// Procura FFmpeg (local primeiro, depois PATH)
+	ffmpegPath := findFFmpegPath()
+	args := []string{ffmpegPath}
 
 	if isRTSP {
 		log.Printf("[%s] Protocolo: RTSP", c.ID)

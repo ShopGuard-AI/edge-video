@@ -4,20 +4,61 @@ Guia completo para instalar Edge Video V2 como serviço Windows resiliente, com 
 
 ---
 
-## 📋 Pré-requisitos
+## 🚀 Instalação Rápida (Recomendada)
+
+### 1. Download do Release
+
+Baixe o arquivo ZIP do release: `edge-video-v1.6.zip`
+
+### 2. Extrair e Rodar Setup
+
+```powershell
+# Extrair para C:\EdgeVideo
+Expand-Archive -Path edge-video-v1.6.zip -DestinationPath C:\EdgeVideo
+cd C:\EdgeVideo
+
+# Rodar setup automático (baixa FFmpeg)
+.\setup.ps1
+```
+
+O script `setup.ps1` faz automaticamente:
+- ✅ Baixa FFmpeg (~100 MB)
+- ✅ Extrai apenas o necessário
+- ✅ Valida instalação
+- ✅ Limpa arquivos temporários
+
+### 3. Configurar e Rodar
+
+```powershell
+# Edite config.yaml com suas credenciais
+notepad config.yaml
+
+# Teste manualmente
+.\producer.exe
+```
+
+**Pronto!** Se funcionou, vá para seção "Instalar como Serviço Windows" abaixo.
+
+---
+
+## 📋 Instalação Manual (Alternativa)
+
+Se o `setup.ps1` falhar (firewall, antivírus), instale manualmente:
 
 ### 1. FFmpeg (OBRIGATÓRIO)
 
 **Download**: https://github.com/BtbN/FFmpeg-Builds/releases
 
 1. Baixe: `ffmpeg-master-latest-win64-gpl.zip`
-2. Extraia para: `C:\ffmpeg`
-3. Adicione ao PATH:
+2. Extraia `bin/ffmpeg.exe` para: `C:\EdgeVideo\ffmpeg.exe`
+
+OU adicione ao PATH do sistema:
    ```powershell
    # Como Administrador
    [Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\ffmpeg\bin", "Machine")
    ```
-4. Verifique:
+
+Verifique:
    ```powershell
    ffmpeg -version
    ```
