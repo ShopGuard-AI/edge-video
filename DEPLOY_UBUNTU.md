@@ -213,7 +213,7 @@ sudo journalctl -u edge-video --since "2024-12-10" --until "2024-12-11"
 
 ## 📊 Monitoramento
 
-### Verificar Status
+### Opção 1: Verificação Rápida (CLI)
 
 ```bash
 # Status do serviço
@@ -224,32 +224,154 @@ sudo systemctl is-enabled edge-video
 
 # Ver se está rodando
 sudo systemctl is-active edge-video
-```
 
-### Métricas Prometheus
-
-```bash
-# Acessar métricas
+# Métricas Prometheus (texto bruto)
 curl http://localhost:2112/metrics
+
+# Health check
+curl http://localhost:2112/health
 
 # FPS por câmera
 curl -s http://localhost:2112/metrics | grep edge_video_camera_fps
 
 # Memory usage
-curl -s http://localhost:2112/metrics | grep edge_video_system_memory_mb
+curl -s http://localhost:2112/metrics | grep edge_video_system_ram_mb
 
 # Circuit breaker states
 curl -s http://localhost:2112/metrics | grep edge_video_circuit_breaker_state
 ```
 
-### Integrar com Prometheus
+### Opção 2: Stack Completo Prometheus + Grafana (RECOMENDADO)
 
-Editar `/etc/prometheus/prometheus.yml`:
+#### Instalação Docker + Docker Compose
+
+```bash
+# Ubuntu 20.04+
+# Remover versões antigas
+sudo apt remove docker docker-engine docker.io containerd runc
+
+# Instalar dependências
+sudo apt update
+sudo apt install -y ca-certificates curl gnupg lsb-release
+
+# Adicionar chave GPG oficial Docker
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+# Adicionar repositório
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Instalar Docker
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# Verificar instalação
+docker --version
+docker compose version
+
+# Adicionar seu usuário ao grupo docker (evita usar sudo)
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+#### Subir Stack de Monitoramento
+
+```bash
+# Navegar para pasta monitoring
+cd /opt/edge-video/monitoring
+
+# Subir Prometheus + Grafana
+docker compose up -d
+
+# Verificar containers
+docker compose ps
+
+# Ver logs
+docker compose logs -f
+```
+
+**Serviços disponíveis**:
+- 📊 **Grafana**: http://localhost:3000 (admin/admin)
+- 📈 **Prometheus**: http://localhost:9090
+
+#### Acessar Dashboard Grafana
+
+1. Acesse: http://localhost:3000 ou http://[IP_SERVIDOR]:3000
+2. Login: `admin` / `admin` (altere no primeiro login)
+3. Dashboards → "Edge Video V2"
+
+**Dashboard inclui**:
+- 📈 FPS em tempo real por câmera
+- 💾 Uso de memória e CPU
+- 🔴 Circuit Breaker states
+- 📊 Frames publicados vs descartados
+- ⏱️ Latência de publicação
+- 🎯 Taxa de ACK/NACK RabbitMQ
+- 📉 Gráficos históricos (30 dias)
+
+#### Gerenciar Stack
+
+```bash
+# Parar stack
+docker compose down
+
+# Parar e remover volumes (apaga histórico)
+docker compose down -v
+
+# Restart
+docker compose restart
+
+# Ver logs específicos
+docker compose logs grafana -f
+docker compose logs prometheus -f
+
+# Atualizar imagens
+docker compose pull
+docker compose up -d
+```
+
+#### Retenção de Dados
+
+Prometheus mantém métricas por **30 dias** (configurável em `prometheus/prometheus.yml`):
+```yaml
+storage.tsdb.retention.time=30d
+```
+
+#### Firewall (se acessar remotamente)
+
+```bash
+# Grafana (porta 3000)
+sudo ufw allow 3000/tcp comment 'Grafana'
+
+# Prometheus (porta 9090)
+sudo ufw allow 9090/tcp comment 'Prometheus'
+
+# Métricas Producer (porta 2112)
+sudo ufw allow 2112/tcp comment 'Edge Video Metrics'
+
+# Verificar
+sudo ufw status
+```
+
+### Opção 3: Integrar com Prometheus Existente
+
+Se você já tem Prometheus rodando, adicione ao scrape config:
+
+```bash
+sudo nano /etc/prometheus/prometheus.yml
+```
+
 ```yaml
 scrape_configs:
   - job_name: 'edge-video'
+    scrape_interval: 5s
     static_configs:
       - targets: ['localhost:2112']
+        labels:
+          instance: 'producer-1'
+          environment: 'production'
 ```
 
 ```bash
@@ -374,8 +496,17 @@ sudo journalctl -u edge-video --no-pager
 /opt/edge-video/
 ├── producer-linux         ← Executável
 ├── config.yaml            ← Configuração
+├── setup-ubuntu.sh        ← Setup automático FFmpeg
+├── DEPLOY_UBUNTU.md       ← Este guia
 ├── producer-linux.bak     ← Backup (atualizações)
-└── logs/                  ← Logs locais (se habilitado)
+└── monitoring/            ← Stack de monitoramento (opcional)
+    ├── docker-compose.yml
+    ├── README.md
+    ├── prometheus/
+    │   └── prometheus.yml
+    └── grafana/
+        ├── provisioning/
+        └── dashboards/
 ```
 
 **Logs systemd**:
@@ -386,16 +517,6 @@ sudo journalctl -u edge-video --no-pager
 ---
 
 ## 🔒 Segurança
-
-### Firewall (UFW)
-
-```bash
-# Permitir Prometheus (se externo)
-sudo ufw allow 2112/tcp comment 'Edge Video Metrics'
-
-# Verificar
-sudo ufw status
-```
 
 ### Hardening Adicional
 
@@ -422,6 +543,7 @@ sudo systemctl restart edge-video
 
 ## ✅ Checklist de Deploy
 
+**Obrigatório**:
 - [ ] FFmpeg instalado (`ffmpeg -version`)
 - [ ] Usuário `edgevideo` criado
 - [ ] Diretório `/opt/edge-video` criado
@@ -436,14 +558,22 @@ sudo systemctl restart edge-video
 - [ ] Métricas acessíveis (`curl localhost:2112/metrics`)
 - [ ] Reboot testado (serviço volta automaticamente)
 
+**Opcional (Monitoramento)**:
+- [ ] Docker + Docker Compose instalados
+- [ ] pasta monitoring/ copiada
+- [ ] Firewall configurado (portas 3000, 9090, 2112)
+- [ ] docker compose up -d executado
+- [ ] Grafana acessível (http://localhost:3000)
+- [ ] Dashboard "Edge Video V2" configurado
+
 ---
 
 ## 🎯 Próximos Passos
 
-1. **Monitoramento**: Configure Grafana + Prometheus (ver `monitoring/`)
-2. **Backup**: Agende backup diário do config.yaml
-3. **Alertas**: Configure notificações (email/Slack) para métricas críticas
-4. **HA**: Para alta disponibilidade, rode múltiplas instâncias (1 por câmera)
+1. **Alertas**: Configure Prometheus Alertmanager para notificações (email/Slack/Discord)
+2. **Backup**: Agende backup diário do config.yaml (cron)
+3. **HA**: Para alta disponibilidade, rode múltiplas instâncias em servidores diferentes
+4. **Segurança**: Revise permissões e hardening adicional do systemd
 
 ---
 

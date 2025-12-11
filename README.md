@@ -123,29 +123,47 @@ Rastreia 100% ACK/NACK RabbitMQ. Reconexão DEVE parar goroutine antigo (previne
 
 ## 📈 Monitoramento
 
-### Métricas Prometheus
+Producer expõe métricas Prometheus em **http://localhost:2112/metrics**.
+
+### Métricas Disponíveis
 
 **Por câmera**:
-- `edge_video_frames_received_total`
-- `edge_video_frames_published_total`
-- `edge_video_frames_dropped_total`
-- `edge_video_camera_fps`
-- `edge_video_circuit_breaker_state` (0=CLOSED, 1=OPEN, 2=HALF_OPEN)
+- `edge_video_frames_received_total` - Total de frames recebidos do FFmpeg
+- `edge_video_frames_published_total` - Total de frames publicados no RabbitMQ
+- `edge_video_frames_dropped_total` - Total de frames descartados (buffer cheio)
+- `edge_video_camera_fps` - FPS real da câmera
+- `edge_video_publish_latency_ms` - Latência de publicação em ms
+- `edge_video_circuit_breaker_state` - Estado do circuit breaker (0=CLOSED, 1=OPEN, 2=HALF_OPEN)
 
-**Globais**:
-- `edge_video_publisher_confirms_ack_total`
-- `edge_video_system_cpu_percent`
-- `edge_video_system_memory_mb`
-- `edge_video_goroutines_count`
+**Globais do sistema**:
+- `edge_video_publisher_confirms_ack_total` - Total de ACKs do RabbitMQ
+- `edge_video_publisher_confirms_nack_total` - Total de NACKs do RabbitMQ
+- `edge_video_system_cpu_percent` - Uso de CPU do processo (%)
+- `edge_video_system_ram_mb` - Uso de RAM em MB
+- `edge_video_system_goroutines` - Número de goroutines ativas
+- `edge_video_uptime_seconds` - Tempo de execução em segundos
 
-### Stack Grafana
+### Stack Prometheus + Grafana (Opcional)
 
 ```bash
-cd monitoring && docker-compose up -d
+cd monitoring
+docker-compose up -d
 ```
 
-- **Grafana**: http://localhost:3000 (admin/admin)
-- **Prometheus**: http://localhost:9090
+**Serviços**:
+- 📊 **Grafana**: http://localhost:3000 (admin/admin)
+- 📈 **Prometheus**: http://localhost:9090
+
+**Dashboard Grafana pré-configurado** com:
+- 📈 FPS em tempo real por câmera
+- 💾 Uso de memória e CPU
+- 🔴 Circuit Breaker states
+- 📊 Frames publicados vs descartados
+- ⏱️ Latência de publicação
+- 🎯 Taxa de ACK/NACK RabbitMQ
+- 📉 Gráficos históricos (30 dias)
+
+Para mais detalhes: `monitoring/README.md`
 
 ---
 
@@ -223,11 +241,19 @@ Detalhes: `docs/BUGS_FIXED.md`
 
 ---
 
-## 📚 Docs
+## 📚 Documentação
 
+### Deployment
+- **[DEPLOY_WINDOWS.md](DEPLOY_WINDOWS.md)** - Deploy Windows (NSSM service + Docker)
+- **[DEPLOY_UBUNTU.md](DEPLOY_UBUNTU.md)** - Deploy Ubuntu (systemd service + Docker)
+
+### Técnica
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Pipeline, componentes, métricas
 - **[docs/BUGS_FIXED.md](docs/BUGS_FIXED.md)** - Bugs críticos + soluções
 - **[docs/SETUP.md](docs/SETUP.md)** - Setup, config, troubleshooting
+
+### Monitoramento
+- **[monitoring/README.md](monitoring/README.md)** - Grafana + Prometheus + dashboards
 
 ---
 
@@ -252,15 +278,41 @@ Detalhes: `docs/BUGS_FIXED.md`
 
 ## 📦 Build & Deploy
 
-```bash
-# Build
-go build -o producer.exe cmd/producer/main.go
-make build-prod   # Otimizado
+### Build Local
 
-# Deploy
-# Copie producer.exe + config.yaml para servidor
-# Configure como serviço (systemd/Windows Service)
+```bash
+# Windows
+go build -ldflags="-s -w" -o producer.exe cmd/producer/main.go
+
+# Linux
+GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o producer-linux cmd/producer/main.go
+
+# Makefile
+make windows    # Build producer.exe
+make linux      # Build producer-linux
+make release    # Organiza build/windows/ e build/linux/
 ```
+
+### Deploy Production
+
+**Windows**: Ver **[DEPLOY_WINDOWS.md](DEPLOY_WINDOWS.md)**
+- Setup automático FFmpeg (setup.ps1)
+- NSSM service resiliente
+- Auto-restart em falhas
+- Docker Desktop + Grafana (opcional)
+
+**Ubuntu/Linux**: Ver **[DEPLOY_UBUNTU.md](DEPLOY_UBUNTU.md)**
+- Setup automático FFmpeg (setup-ubuntu.sh)
+- Systemd service com security hardening
+- Logs centralizados journald
+- Docker + Docker Compose + Grafana (opcional)
+
+### Releases
+
+Download: https://github.com/ShopGuard-AI/edge-video/releases
+
+- `edge-video-v1.6-windows.zip` - Producer + setup + docs
+- `edge-video-v1.6-linux.tar.gz` - Producer + setup + docs
 
 ---
 
@@ -272,4 +324,4 @@ make build-prod   # Otimizado
 
 ---
 
-**Versão**: V2.3 | **Status**: ✅ Production-Ready | **Update**: 2024-12-11
+**Versão**: v1.6 | **Status**: ✅ Production-Ready | **Update**: 2025-12-11

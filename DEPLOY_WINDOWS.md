@@ -244,7 +244,7 @@ C:\EdgeVideo\logs\
 
 ## 📊 Monitoramento
 
-### Verificar Status
+### Opção 1: Verificação Rápida (CLI)
 
 ```powershell
 # Status do serviço
@@ -253,11 +253,81 @@ sc query EdgeVideoProducer
 # Logs em tempo real
 Get-Content C:\EdgeVideo\logs\stdout.log -Wait
 
-# Métricas Prometheus
+# Métricas Prometheus (texto bruto)
 curl http://localhost:2112/metrics
+
+# Health check
+curl http://localhost:2112/health
 
 # pprof (goroutines)
 curl http://localhost:6060/debug/pprof/goroutine?debug=1
+```
+
+### Opção 2: Stack Completo Prometheus + Grafana (RECOMENDADO)
+
+#### Instalação do Docker Desktop
+
+1. **Download**: https://www.docker.com/products/docker-desktop
+2. Instale Docker Desktop for Windows
+3. Reinicie a máquina
+4. Verifique instalação:
+   ```powershell
+   docker --version
+   docker-compose --version
+   ```
+
+#### Subir Stack de Monitoramento
+
+```powershell
+# Navegar para pasta monitoring
+cd C:\EdgeVideo\monitoring
+
+# Subir Prometheus + Grafana
+docker-compose up -d
+
+# Verificar containers
+docker-compose ps
+```
+
+**Serviços disponíveis**:
+- 📊 **Grafana**: http://localhost:3000 (admin/admin)
+- 📈 **Prometheus**: http://localhost:9090
+
+#### Acessar Dashboard Grafana
+
+1. Acesse: http://localhost:3000
+2. Login: `admin` / `admin`
+3. Dashboards → "Edge Video V2"
+
+**Dashboard inclui**:
+- 📈 FPS em tempo real por câmera
+- 💾 Uso de memória e CPU
+- 🔴 Circuit Breaker states
+- 📊 Frames publicados vs descartados
+- ⏱️ Latência de publicação
+- 🎯 Taxa de ACK/NACK RabbitMQ
+
+#### Gerenciar Stack
+
+```powershell
+# Ver logs
+docker-compose logs -f
+
+# Parar stack
+docker-compose down
+
+# Parar e remover volumes (apaga histórico)
+docker-compose down -v
+
+# Restart
+docker-compose restart
+```
+
+#### Retenção de Dados
+
+Prometheus mantém métricas por **30 dias** (configurável em `prometheus/prometheus.yml`):
+```yaml
+storage.tsdb.retention.time=30d
 ```
 
 ### Métricas Importantes
@@ -269,23 +339,44 @@ edge_video_camera_fps{camera_id="cam1"}
 # Frames publicados (taxa de sucesso)
 rate(edge_video_frames_published_total[1m])
 
-# Circuit Breaker states
+# Circuit Breaker states (0=CLOSED, 1=OPEN, 2=HALF_OPEN)
 edge_video_circuit_breaker_state{camera_id="cam1"}
 
 # Memory usage
-edge_video_system_memory_mb
+edge_video_system_ram_mb
 
 # Goroutines (detectar leak)
-edge_video_goroutines_count
+edge_video_system_goroutines
+
+# Taxa de ACK
+rate(edge_video_publisher_confirms_ack_total[5m])
+/
+(rate(edge_video_publisher_confirms_ack_total[5m]) + rate(edge_video_publisher_confirms_nack_total[5m]))
 ```
 
 ### Alertas Recomendados
 
+Configure alertas no Prometheus Alertmanager (opcional):
+
 1. **FPS baixo**: `edge_video_camera_fps < 8`
-2. **Memory alto**: `edge_video_system_memory_mb > 900`
+2. **Memory alto**: `edge_video_system_ram_mb > 900`
 3. **Circuit Breaker OPEN**: `edge_video_circuit_breaker_state == 1`
-4. **Goroutine leak**: `edge_video_goroutines_count > 50`
+4. **Goroutine leak**: `edge_video_system_goroutines > 50`
 5. **Drops frequentes**: `rate(edge_video_frames_dropped_total[1m]) > 1`
+6. **Taxa de ACK < 95%**: `taxa_ack < 0.95`
+
+### Firewall (se acessar remotamente)
+
+```powershell
+# Grafana (porta 3000)
+New-NetFirewallRule -DisplayName "Grafana" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow
+
+# Prometheus (porta 9090)
+New-NetFirewallRule -DisplayName "Prometheus" -Direction Inbound -LocalPort 9090 -Protocol TCP -Action Allow
+
+# Métricas Producer (porta 2112)
+New-NetFirewallRule -DisplayName "EdgeVideo Metrics" -Direction Inbound -LocalPort 2112 -Protocol TCP -Action Allow
+```
 
 ---
 
@@ -393,18 +484,29 @@ net restart EdgeVideoProducer
 C:\EdgeVideo\
 ├── producer.exe           ← Executável
 ├── config.yaml            ← Configuração
+├── setup.ps1              ← Setup automático FFmpeg
+├── DEPLOY_WINDOWS.md      ← Este guia
 ├── producer.exe.bak       ← Backup (atualizações)
-└── logs\
-    ├── stdout.log         ← Logs info
-    ├── stderr.log         ← Logs erro
-    └── *.log.1-4          ← Rotações antigas
+├── logs\
+│   ├── stdout.log         ← Logs info
+│   ├── stderr.log         ← Logs erro
+│   └── *.log.1-4          ← Rotações antigas
+└── monitoring\            ← Stack de monitoramento (opcional)
+    ├── docker-compose.yml
+    ├── README.md
+    ├── prometheus\
+    │   └── prometheus.yml
+    └── grafana\
+        ├── provisioning\
+        └── dashboards\
 ```
 
 ---
 
 ## ✅ Checklist de Deploy
 
-- [ ] FFmpeg instalado e no PATH
+**Obrigatório**:
+- [ ] FFmpeg instalado (via setup.ps1 ou manual)
 - [ ] NSSM baixado
 - [ ] Diretório C:\EdgeVideo criado
 - [ ] producer.exe + config.yaml copiados
@@ -418,14 +520,21 @@ C:\EdgeVideo\
 - [ ] Logs monitorados (sem erros)
 - [ ] Reboot testado (serviço volta automaticamente)
 
+**Opcional (Monitoramento)**:
+- [ ] Docker Desktop instalado
+- [ ] pasta monitoring/ copiada
+- [ ] docker-compose up -d executado
+- [ ] Grafana acessível (localhost:3000)
+- [ ] Dashboard "Edge Video V2" configurado
+
 ---
 
 ## 🎯 Próximos Passos
 
-1. **Monitoramento**: Configure Grafana + Prometheus (ver `monitoring/`)
+1. **Alertas**: Configure Prometheus Alertmanager para notificações (email/Slack/Discord)
 2. **Backup**: Agende backup diário do config.yaml
-3. **Alertas**: Configure notificações (email/Slack) para métricas críticas
-4. **HA**: Para alta disponibilidade, rode múltiplas instâncias (1 por câmera)
+3. **HA**: Para alta disponibilidade, rode múltiplas instâncias em máquinas diferentes
+4. **Segurança**: Configure firewall Windows para expor apenas portas necessárias
 
 ---
 
