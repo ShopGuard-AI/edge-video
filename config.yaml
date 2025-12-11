@@ -1,0 +1,95 @@
+# Configuração global
+fps: 15
+quality: 5
+
+# Configuração AMQP global (usada como fallback)
+amqp:
+  url: "amqp://supercarlao_rj_mercado:vTUaGG9S0Kbl_1AhqPxudML1jCYHRq0efkRDA6p_lgM@34.71.212.239:5672/supercarlao_rj_mercado"
+  prefetch_count: 50           # QoS: máximo de frames não-confirmados por consumer (0 = ilimitado)
+  publisher_confirms: false    # Habilita Publisher Confirms (DESABILITAR se não houver consumer!)
+
+
+# Circuit Breaker (proteção contra falhas de câmera)
+# Se habilitado, câmeras que falham muito entram em backoff exponencial
+circuit_breaker:
+  enabled: true                # Habilita circuit breaker (true/false)
+  max_failures: 5              # Falhas consecutivas antes de abrir circuito
+  reset_timeout: 30s           # Tempo antes de tentar reconectar (HALF_OPEN)
+  half_open_successes: 3       # Sucessos em HALF_OPEN necessários para fechar
+  initial_backoff: 5s          # Backoff inicial quando abre circuito
+  max_backoff: 5m              # Backoff máximo (5 minutos)
+  backoff_multiplier: 2.0      # Multiplicador do backoff (5s → 10s → 20s → ...)
+
+# Memory Controller (gestão automática de memória)
+# Se habilitado, monitora uso de RAM e dispara GC quando necessário
+memory_controller:
+  enabled: false                # Habilita memory controller (true/false)
+  max_memory_mb: 2048          # Limite máximo de memória (MB) - ajuste conforme seu sistema
+  warning_percent: 60.0        # Nível WARNING (60% do max) - começa throttling leve
+  critical_percent: 75.0       # Nível CRITICAL (75% do max) - throttling médio
+  emergency_percent: 85.0      # Nível EMERGENCY (85% do max) - throttling agressivo
+  check_interval: 5s           # Intervalo de verificação de memória
+  gc_trigger_percent: 70.0     # Dispara GC quando atingir esse percentual
+
+# Redis (armazenamento de frames JPEG)
+# Se habilitado, frames vão pro Redis e só metadata vai pro RabbitMQ
+redis:
+  enabled: true                          # Habilita Redis storage (true/false)
+  address: "35.199.96.88:6379"           # Endereço do Redis (remoto sp - Brasil latencia baixa)
+  password: "MinhaSenhaMuitoForte@2024"  # Senha do Redis
+  db: 0                                  # Database number (0-15)
+  vhost: "supercarlao_rj_mercado"        # VHost do RabbitMQ (primeiro trecho da chave)
+  prefix: "frames"                       # Prefixo das chaves (ex: frames:cam1:timestamp)
+  ttl: 120s                              # TTL dos frames (2 minutos)
+  max_retries: 3                         # Tentativas em caso de falha
+  retry_delay: 100ms                     # Delay entre tentativas
+  timeout: 2s                            # Timeout por operação Store/Get (2s = bom balanço)
+
+# Metadata Publisher (publicação de metadados no RabbitMQ)
+# Quando Redis habilitado: publica metadata JSON com redis_key
+# Quando Redis desabilitado: publica frame binário direto (modo atual)
+metadata:
+  enabled: false               # Publica metadados JSON separados (true/false)
+  include_redis_key: true      # Incluir redis_key nos metadados (se redis enabled)
+
+# Monitoring (portas de serviços de monitoramento)
+# auto_port: se true, tenta portas alternativas se a configurada estiver ocupada
+monitoring:
+  metrics_port: 2112          # Porta do Prometheus metrics (default: 2112)
+  pprof_port: 6060            # Porta do pprof debug (default: 6060)
+  auto_port: true             # Tenta portas alternativas se ocupadas (útil para E2E tests)
+
+# Câmeras com configuração INDIVIDUAL de exchange e routing_key
+cameras:
+  # Mercado Autônomo (RTMP)
+  - id: "cam1"
+    url: "rtmp://str-rtmp-001.monuv.com.br:1935/rtmp/96159.stream"
+    exchange: "supercarlao_rj_mercado.exchange"
+    routing_key: "supercarlao_rj_mercado.cam1"
+
+  # # Pix Force - Câmeras RTSP (5 canais)
+  # - id: "cam2"
+  #   url: "rtsp://pixforce:pixforce1234@186.193.228.105:12554/cam/realmonitor?channel=1&subtype=0"
+  #   exchange: "supercarlao_rj_mercado.exchange"
+  #   routing_key: "supercarlao_rj_mercado.cam2"
+
+  # - id: "cam3"
+  #   url: "rtsp://pixforce:pixforce1234@186.193.228.105:12554/cam/realmonitor?channel=2&subtype=0"
+  #   exchange: "supercarlao_rj_mercado.exchange"
+  #   routing_key: "supercarlao_rj_mercado.cam3"
+
+  # - id: "cam4"
+  #   url: "rtsp://pixforce:pixforce1234@186.193.228.105:12554/cam/realmonitor?channel=3&subtype=0"
+  #   exchange: "supercarlao_rj_mercado.exchange"
+  #   routing_key: "supercarlao_rj_mercado.cam4"
+
+  # - id: "cam5"
+  #   url: "rtsp://pixforce:pixforce1234@186.193.228.105:12554/cam/realmonitor?channel=4&subtype=0"
+  #   exchange: "supercarlao_rj_mercado.exchange"
+  #   routing_key: "supercarlao_rj_mercado.cam5"
+
+  # # - id: "cam6"
+  # #   url: "rtsp://pixforce:pixforce1234@186.193.228.105:12554/cam/realmonitor?channel=banana"
+  # #   exchange: "supercarlao_rj_mercado.exchange"
+  # #   routing_key: "supercarlao_rj_mercado.cam6"
+  

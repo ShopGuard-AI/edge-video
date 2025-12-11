@@ -1,1 +1,0 @@
-# Componentes\n\nEm desenvolvimento.
