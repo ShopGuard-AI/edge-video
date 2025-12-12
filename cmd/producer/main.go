@@ -8,7 +8,9 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -19,9 +21,52 @@ import (
 	"edge-video/v2/internal/resilience"
 	"edge-video/v2/internal/storage"
 	"edge-video/v2/internal/stream"
+
+	"github.com/shirou/gopsutil/v3/cpu"
 )
 
 var startTime time.Time
+
+// cleanupOrphanFFmpeg mata processos FFmpeg órfãos de execuções anteriores
+func cleanupOrphanFFmpeg() {
+	log.Println("🧹 Verificando processos FFmpeg órfãos...")
+
+	var cmd *exec.Cmd
+
+	// Detecta sistema operacional e usa comando apropriado
+	if runtime.GOOS == "windows" {
+		// Windows: taskkill /F /IM ffmpeg.exe
+		cmd = exec.Command("taskkill", "/F", "/IM", "ffmpeg.exe")
+	} else {
+		// Linux/Unix: pkill -9 ffmpeg
+		cmd = exec.Command("pkill", "-9", "ffmpeg")
+	}
+
+	// Executa comando de cleanup
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		// Se erro é "processo não encontrado", está tudo certo
+		if runtime.GOOS == "windows" {
+			// Windows retorna erro se processo não existe
+			if len(output) > 0 && (string(output) == "" || len(output) < 10) {
+				log.Println("✓ Nenhum processo FFmpeg órfão encontrado")
+				return
+			}
+		} else {
+			// Linux pkill retorna exit code 1 se nenhum processo foi encontrado
+			log.Println("✓ Nenhum processo FFmpeg órfão encontrado")
+			return
+		}
+	}
+
+	// Se chegou aqui, processos foram mortos
+	if len(output) > 0 {
+		log.Printf("✓ Processos FFmpeg órfãos limpos: %s", string(output))
+	} else {
+		log.Println("✓ Processos FFmpeg órfãos limpos com sucesso")
+	}
+}
 
 func main() {
 	// Marca início do sistema
@@ -44,6 +89,9 @@ func main() {
 
 	log.Printf("Configuração carregada: %d câmeras, %d FPS, Quality %d",
 		len(cfg.Cameras), cfg.FPS, cfg.Quality)
+
+	// Cleanup de processos FFmpeg órfãos (de execuções anteriores)
+	cleanupOrphanFFmpeg()
 
 	// Inicia Prometheus metrics server
 	metricsServer := monitoring.InitMetricsServer(cfg.Monitoring.MetricsPort, cfg.Monitoring.AutoPort)
@@ -155,7 +203,7 @@ func main() {
 	// Cria contexto para statsMonitor poder ser cancelado
 	statsCtx, statsCancel := context.WithCancel(context.Background())
 	defer statsCancel()
-	go statsMonitor(statsCtx, cameras, publishers[0])
+	go statsMonitor(statsCtx, cameras, publishers[0], metricsServer)
 
 	// Inicia profiling monitor
 	monitoring.InitSystemStats() // Inicializa tracking de CPU/RAM
@@ -246,7 +294,7 @@ func main() {
 	}
 
 	// RELATÓRIO FINAL DE ESTATÍSTICAS
-	printFinalReport(cameras, publishers[0], cfg.FPS)
+	printFinalReport(cameras, publishers[0], cfg.FPS, metricsServer)
 
 	// RELATÓRIO DE PROFILING
 	monitoring.PrintProfileReport()
@@ -272,7 +320,7 @@ func main() {
 }
 
 // statsMonitor exibe estatísticas periodicamente
-func statsMonitor(ctx context.Context, cameras []*stream.CameraStream, publisher *messaging.Publisher) {
+func statsMonitor(ctx context.Context, cameras []*stream.CameraStream, publisher *messaging.Publisher, metricsServer *monitoring.MetricsServer) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -306,6 +354,8 @@ func statsMonitor(ctx context.Context, cameras []*stream.CameraStream, publisher
 
 		// Stats das câmeras
 		openCircuits := uint32(0)
+		uptime := time.Since(startTime)
+
 		for _, cam := range cameras {
 			count, lastFrame := cam.Stats()
 			age := time.Since(lastFrame)
@@ -329,17 +379,38 @@ func statsMonitor(ctx context.Context, cameras []*stream.CameraStream, publisher
 
 			log.Printf("[%s] %s - Frames: %d, Último: %v atrás%s",
 				cam.ID, status, count, age.Round(time.Second), cbInfo)
+
+			// Calcula e atualiza FPS para métricas Prometheus
+			if metricsServer != nil && uptime.Seconds() > 0 {
+				frameCount, framesReceived, _, _, _ := cam.DetailedStats()
+				avgFPSCamera := float64(framesReceived) / uptime.Seconds()
+				metricsServer.UpdateFPS(cam.ID, avgFPSCamera)
+
+				// Log detalhado (debug)
+				_ = frameCount // Evita warning unused
+			}
 		}
 
 		// Atualiza métrica de circuit breakers
 		monitoring.TrackCircuitBreaker(openCircuits)
+
+		// Calcula e atualiza CPU usage
+		if metricsServer != nil {
+			// cpu.Percent() retorna array com % de CPU (intervalo de 1 segundo)
+			percentages, err := cpu.Percent(time.Second, false)
+			if err == nil && len(percentages) > 0 {
+				cpuPercent := percentages[0]
+				monitoring.UpdateSystemCPU(cpuPercent)
+				log.Printf("CPU: %.2f%%", cpuPercent)
+			}
+		}
 
 		log.Println(sep + "\n")
 	}
 }
 
 // printFinalReport exibe relatório completo ao encerrar
-func printFinalReport(cameras []*stream.CameraStream, publisher *messaging.Publisher, targetFPS int) {
+func printFinalReport(cameras []*stream.CameraStream, publisher *messaging.Publisher, targetFPS int, metricsServer *monitoring.MetricsServer) {
 	uptime := time.Since(startTime)
 
 	sep := "================================================================"
@@ -414,6 +485,11 @@ func printFinalReport(cameras []*stream.CameraStream, publisher *messaging.Publi
 		avgFPSCamera := 0.0
 		if uptime.Seconds() > 0 {
 			avgFPSCamera = float64(framesReceived) / uptime.Seconds()
+		}
+
+		// Atualiza métrica Prometheus de FPS
+		if metricsServer != nil {
+			metricsServer.UpdateFPS(cam.ID, avgFPSCamera)
 		}
 
 		// Efficiency (quanto do target FPS foi atingido)

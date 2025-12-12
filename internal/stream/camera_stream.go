@@ -638,6 +638,15 @@ func (c *CameraStream) retryFFmpegWithBackoff() {
 			continue
 		}
 
+		// Mata processo FFmpeg anterior (se existir) antes de reconectar
+		c.mu.Lock()
+		if c.cmd != nil && c.cmd.Process != nil {
+			log.Printf("[%s] Matando processo FFmpeg anterior (PID: %d) antes de reconectar...", c.ID, c.cmd.Process.Pid)
+			c.cmd.Process.Kill()
+			c.cmd = nil
+		}
+		c.mu.Unlock()
+
 		// Tenta reconectar usando wrapper que gerencia WaitGroup
 		log.Printf("[%s] Tentando reconectar FFmpeg (estado: %s)...", c.ID, stats.State)
 		c.startFFmpegWithWaitGroup()
