@@ -267,12 +267,13 @@ func (c *CameraStream) startFFmpeg() {
 		log.Printf("[%s] Protocolo: RTSP", c.ID)
 		args = append(args,
 			"-rtsp_transport", "tcp",
-			"-timeout", "5000000",
+			"-timeout", "30000000",     // 30s - melhor estabilidade para streams longos
+			"-rtsp_flags", "prefer_tcp",
 		)
 	} else if isRTMP {
 		log.Printf("[%s] Protocolo: RTMP", c.ID)
 		args = append(args,
-			"-rw_timeout", "5000000",
+			"-rw_timeout", "30000000",  // 30s - melhor estabilidade
 			"-listen", "0",
 		)
 	}
@@ -281,8 +282,8 @@ func (c *CameraStream) startFFmpeg() {
 		"-fflags", "nobuffer+fastseek+flush_packets+discardcorrupt",
 		"-flags", "low_delay",
 		"-max_delay", "0",
-		"-probesize", "32",
-		"-analyzeduration", "0",
+		"-probesize", "5000000",        // 5MB - detecta stream format adequadamente
+		"-analyzeduration", "5000000",  // 5s - analisa stream sem EOF prematuro
 		"-err_detect", "ignore_err",
 		"-i", c.URL,
 		"-vf", fmt.Sprintf("fps=%d", c.FPS),
