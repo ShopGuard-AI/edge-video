@@ -21,14 +21,18 @@ go build -o producer.exe cmd/producer/main.go
 fps: 15
 quality: 5
 
+amqp:
+  url: "amqp://user:pass@host:5672/vhost"
+
+camera_registration:
+  enabled: true  # Registra câmeras em API externa antes de criar exchanges
+  url: "https://your-api.com/camera"
+
 redis:
   enabled: true
   address: "35.199.96.88:6379"
   password: "senha"
   ttl: 120
-
-amqp:
-  url: "amqp://user:pass@host:5672/vhost"
 
 cameras:
   - id: "cam1"
@@ -74,6 +78,31 @@ edge-video/
 ---
 
 ## ⚡ Features
+
+### Camera Registration API
+Antes de criar exchanges, registra câmeras em API externa via POST.
+- **Configurável**: Habilita/desabilita via `camera_registration.enabled`
+- **URL flexível**: Suporta qualquer endpoint (webhook.site, API produção, etc.)
+- **Payload completo**: Envia câmeras, namespace, RabbitMQ URL, exchange, vhost
+- **Resiliência**: Se API falhar, continua normalmente (não quebra startup)
+
+```yaml
+camera_registration:
+  enabled: true
+  url: "https://your-api.com/camera"
+```
+
+**Payload enviado**:
+```json
+{
+  "cameras": [{"id": "cam1", "url": "rtmp://..."}],
+  "namespace": "vhost",
+  "rabbitmq_url": "amqp://...",
+  "routing_key": "prefix",
+  "exchange": "vhost.exchange",
+  "vhost": "vhost"
+}
+```
 
 ### Latest Frame Policy
 Buffer=5. Se cheio, descarta antigo (não bloqueia). Garante sync perfeita.
@@ -168,6 +197,25 @@ Para mais detalhes: `monitoring/README.md`
 ---
 
 ## ⚙️ Config Essencial
+
+### Camera Registration API
+
+```yaml
+camera_registration:
+  enabled: true                # Habilita/desabilita registro (true/false)
+  url: "https://your-api.com/camera"  # URL da API de registro
+```
+
+**Quando usar**:
+- Integração com sistema de gerenciamento de câmeras
+- Registro automático em dashboard/admin
+- Webhook notifications (ex: webhook.site para debug)
+- APIs de terceiros que precisam saber quais câmeras estão ativas
+
+**Comportamento**:
+- Se `enabled: false` → Nenhum POST é feito
+- Se `enabled: true` mas API falhar → Loga aviso e continua normalmente
+- POST é feito ANTES de criar exchanges RabbitMQ
 
 ### Circuit Breaker
 

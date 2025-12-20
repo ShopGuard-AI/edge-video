@@ -8,6 +8,12 @@ amqp:
   prefetch_count: 50           # QoS: máximo de frames não-confirmados por consumer (0 = ilimitado)
   publisher_confirms: false    # Habilita Publisher Confirms (DESABILITAR se não houver consumer!)
 
+# Camera Registration API (POST /camera antes de criar exchanges)
+# Se habilitado, registra câmeras em API externa antes de criar exchanges
+camera_registration:
+  enabled: true                # Habilita registro de câmeras (true/false)
+  url: "https://webhook.site/632a86c6-1a43-4a8c-b83b-bd2052c50199"  # URL da API de registro
+
 
 # Circuit Breaker (proteção contra falhas de câmera)
 # Se habilitado, câmeras que falham muito entram em backoff exponencial
@@ -35,7 +41,7 @@ memory_controller:
 # Se habilitado, frames vão pro Redis e só metadata vai pro RabbitMQ
 redis:
   enabled: true                          # Habilita Redis storage (true/false)
-  address: "35.199.96.88:6379"           # Endereço do Redis (remoto sp - Brasil latencia baixa)
+  address: "34.30.59.236:6379"           # Endereço do Redis (remoto sp - Brasil latencia baixa)
   password: "MinhaSenhaMuitoForte@2024"  # Senha do Redis
   db: 0                                  # Database number (0-15)
   vhost: "supercarlao_rj_mercado"        # VHost do RabbitMQ (primeiro trecho da chave)

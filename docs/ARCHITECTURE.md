@@ -3,11 +3,48 @@
 ## Pipeline
 
 ```
+STARTUP → Camera Registration API (POST)
+   ↓
 CÂMERA → FFmpeg → Redis.SET(JPEG) + RabbitMQ.Publish(redis_key) → Consumer busca Redis → Processa
 ```
 
 **Latência**: ~160ms (90% Redis remoto)
 **Gargalo**: Redis usado como blob storage (deveria ser metadata)
+
+## Camera Registration API
+
+Antes de criar exchanges RabbitMQ, o producer faz POST para API externa registrando câmeras.
+
+**Configuração** (`config.yaml`):
+```yaml
+camera_registration:
+  enabled: true
+  url: "https://your-api.com/camera"
+```
+
+**Payload**:
+```json
+{
+  "cameras": [{"id": "cam1", "url": "rtmp://..."}],
+  "namespace": "vhost",
+  "rabbitmq_url": "amqp://...",
+  "routing_key": "prefix",
+  "exchange": "exchange_name",
+  "vhost": "vhost"
+}
+```
+
+**Sequência de startup**:
+1. Carrega config
+2. Cleanup FFmpeg órfãos
+3. Inicia metrics server
+4. Conecta Redis
+5. **Registra câmeras na API** ← NOVO
+6. Inicia pprof
+7. Cria publishers + exchanges
+8. Inicia câmeras
+
+**Resiliência**: Se API falhar, loga aviso mas continua normalmente (não quebra startup).
 
 ## Componentes
 

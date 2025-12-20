@@ -13,15 +13,22 @@ import (
 
 // Config representa a configuração do sistema
 type Config struct {
-	FPS              int                              `yaml:"fps"`
-	Quality          int                              `yaml:"quality"`
-	AMQP             AMQPConfig                       `yaml:"amqp"`
-	CircuitBreaker   resilience.CircuitBreakerConfig  `yaml:"circuit_breaker"`
-	MemoryController memory.MemoryControllerConfig    `yaml:"memory_controller"`
-	Redis            storage.RedisConfig              `yaml:"redis"`
-	Metadata         MetadataConfig                   `yaml:"metadata"`
-	Monitoring       MonitoringConfig                 `yaml:"monitoring"`
-	Cameras          []CamConfig                      `yaml:"cameras"`
+	FPS                  int                              `yaml:"fps"`
+	Quality              int                              `yaml:"quality"`
+	AMQP                 AMQPConfig                       `yaml:"amqp"`
+	CameraRegistration   CameraRegistrationConfig         `yaml:"camera_registration"`
+	CircuitBreaker       resilience.CircuitBreakerConfig  `yaml:"circuit_breaker"`
+	MemoryController     memory.MemoryControllerConfig    `yaml:"memory_controller"`
+	Redis                storage.RedisConfig              `yaml:"redis"`
+	Metadata             MetadataConfig                   `yaml:"metadata"`
+	Monitoring           MonitoringConfig                 `yaml:"monitoring"`
+	Cameras              []CamConfig                      `yaml:"cameras"`
+}
+
+// CameraRegistrationConfig configuração da API de registro de câmeras
+type CameraRegistrationConfig struct {
+	Enabled bool   `yaml:"enabled"` // Habilita registro de câmeras na API
+	URL     string `yaml:"url"`     // URL da API de registro
 }
 
 // MonitoringConfig configuração de portas de monitoramento

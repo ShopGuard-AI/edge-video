@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -26,6 +29,94 @@ import (
 )
 
 var startTime time.Time
+
+// CameraRegistration representa uma câmera para registro na API
+type CameraRegistration struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+// CameraAPIPayload payload para POST /camera
+type CameraAPIPayload struct {
+	Cameras     []CameraRegistration `json:"cameras"`
+	Namespace   string               `json:"namespace"`
+	RabbitMQURL string               `json:"rabbitmq_url"`
+	RoutingKey  string               `json:"routing_key"`
+	Exchange    string               `json:"exchange"`
+	VHost       string               `json:"vhost"`
+}
+
+// registerCamerasAPI registra câmeras na API antes de criar exchanges
+func registerCamerasAPI(cfg *config.Config) error {
+	// Verifica se está habilitado
+	if !cfg.CameraRegistration.Enabled {
+		log.Println("📡 Camera Registration API DESABILITADO (config.yaml)")
+		return nil
+	}
+
+	// Verifica se URL está configurada
+	if cfg.CameraRegistration.URL == "" {
+		return fmt.Errorf("camera_registration.url não configurada no config.yaml")
+	}
+
+	// Prepara lista de câmeras
+	cameras := make([]CameraRegistration, len(cfg.Cameras))
+	for i, cam := range cfg.Cameras {
+		cameras[i] = CameraRegistration{
+			ID:  cam.ID,
+			URL: cam.URL,
+		}
+	}
+
+	// Extrai vhost da URL do RabbitMQ (último componente do path)
+	// Ex: amqp://user:pass@host:5672/vhost -> vhost
+	vhost := cfg.Redis.Vhost
+	if vhost == "" {
+		vhost = "/"
+	}
+
+	// Prepara payload
+	payload := CameraAPIPayload{
+		Cameras:     cameras,
+		Namespace:   cfg.Redis.Vhost, // Usa vhost como namespace
+		RabbitMQURL: cfg.AMQP.URL,
+		RoutingKey:  cfg.AMQP.RoutingKeyPrefix,
+		Exchange:    cfg.AMQP.Exchange,
+		VHost:       vhost,
+	}
+
+	// Serializa para JSON
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("erro ao serializar payload: %w", err)
+	}
+
+	// Faz POST para API
+	apiURL := cfg.CameraRegistration.URL
+	log.Printf("📡 Registrando câmeras na API: %s", apiURL)
+
+	// Cria HTTP client com TLS InsecureSkipVerify (necessário para 0.0.0.0)
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   10 * time.Second,
+	}
+
+	resp, err := client.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("erro ao fazer POST para API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("API retornou status %d", resp.StatusCode)
+	}
+
+	log.Printf("✅ Câmeras registradas com sucesso na API (status: %d)", resp.StatusCode)
+	return nil
+}
 
 // cleanupOrphanFFmpeg mata processos FFmpeg órfãos de execuções anteriores
 func cleanupOrphanFFmpeg() {
@@ -106,6 +197,13 @@ func main() {
 		log.Println("✓ Redis habilitado - frames serão armazenados no Redis")
 	} else {
 		log.Println("✓ Redis desabilitado - frames vão direto pro RabbitMQ")
+	}
+
+	// Registra câmeras na API ANTES de criar exchanges
+	log.Println("📡 Registrando câmeras na API...")
+	if err := registerCamerasAPI(cfg); err != nil {
+		log.Printf("⚠️  AVISO: Falha ao registrar câmeras na API: %v", err)
+		log.Println("⚠️  Continuando mesmo assim (API pode estar offline)...")
 	}
 
 	// Inicia pprof HTTP server para debugging de goroutines
