@@ -1,0 +1,26 @@
+=== RUN   TestNewPublishHealthMonitor
+--- PASS: TestNewPublishHealthMonitor (0.00s)
+=== RUN   TestNewPublishHealthMonitorDefaults
+--- PASS: TestNewPublishHealthMonitorDefaults (0.00s)
+=== RUN   TestRecordSuccessAndError
+--- PASS: TestRecordSuccessAndError (0.00s)
+=== RUN   TestSlidingWindow
+    publish_health_test.go:144: ✅ Sliding window properly bounded
+--- PASS: TestSlidingWindow (0.00s)
+=== RUN   TestIsDegradedByErrorRate
+--- PASS: TestIsDegradedByErrorRate (0.00s)
+=== RUN   TestIsDegradedByTimeout
+--- PASS: TestIsDegradedByTimeout (0.00s)
+=== RUN   TestIsEmergency
+--- PASS: TestIsEmergency (0.00s)
+=== RUN   TestNoDeadlock
+    publish_health_test.go:272: ✅ No deadlock detected - test passed
+--- PASS: TestNoDeadlock (1.42s)
+=== RUN   TestConcurrentAccess
+    publish_health_test.go:315: ✅ Concurrent access test passed
+--- PASS: TestConcurrentAccess (0.00s)
+=== RUN   TestReset
+--- PASS: TestReset (0.00s)
+PASS
+coverage: 100.0% of statements
+ok  	edge-video/v2/internal/health	(cached)	coverage: 100.0% of statements

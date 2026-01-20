@@ -1,0 +1,38 @@
+global:
+  scrape_interval: 5s      # Coleta métricas a cada 5 segundos
+  evaluation_interval: 5s   # Avalia regras a cada 5 segundos
+  external_labels:
+    cluster: 'edge-video-v2'
+    environment: 'production'
+
+# Alertmanager configuration (opcional - para alertas futuros)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
+
+# Load rules once and periodically evaluate them
+# rule_files:
+#   - "alerts.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Edge Video V2 - Aplicação
+  - job_name: 'edge-video-v2'
+    static_configs:
+      - targets: ['host.docker.internal:2112']  # Windows/Mac Docker Desktop
+        # Para Linux, use: ['172.17.0.1:2112'] ou o IP do host
+
+    # Adiciona labels personalizados
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'edge-video-v2-main'
+
+    # Timeout (deve ser menor que scrape_interval)
+    scrape_timeout: 4s
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

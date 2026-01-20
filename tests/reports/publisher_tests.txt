@@ -1,0 +1,35 @@
+=== RUN   TestPublishWithContextCancellation
+    publisher_test.go:46: ✅ PublishWithContext retorna imediatamente quando contexto cancelado
+--- PASS: TestPublishWithContextCancellation (0.00s)
+=== RUN   TestPublishWithContextTimeout
+    publisher_test.go:75: ✅ PublishWithContext respeita timeout de contexto
+--- PASS: TestPublishWithContextTimeout (0.01s)
+=== RUN   TestPublishRequiresRedis
+2025/12/09 22:11:41 [PUBLISH DEBUG] Camera: cam1, RoutingKey: test.route, Size: 10 bytes, Header[camera_id]: cam1
+2025/12/09 22:11:41 [PUBLISH DEBUG] Camera: cam1, RoutingKey: test.route, Size: 10 bytes, Header[camera_id]: cam1
+    publisher_test.go:110: ✅ Publish requer Redis habilitado (V1.6-style)
+--- PASS: TestPublishRequiresRedis (0.01s)
+=== RUN   TestPublishNotConnected
+    publisher_test.go:140: ✅ Publish falha corretamente quando não conectado
+--- PASS: TestPublishNotConnected (0.00s)
+=== RUN   TestStats
+    publisher_test.go:160: ✅ Stats() retorna estatísticas corretas
+--- PASS: TestStats (0.00s)
+=== RUN   TestIsConnected
+    publisher_test.go:179: ✅ IsConnected() funciona corretamente
+--- PASS: TestIsConnected (0.00s)
+=== RUN   TestConfirmStats
+    publisher_test.go:199: ✅ ConfirmStats() retorna estatísticas de confirmações corretas
+--- PASS: TestConfirmStats (0.00s)
+=== RUN   TestPublisherConfirmsEnabled
+    publisher_test.go:222: ✅ Publisher Confirms flag configurável corretamente
+--- PASS: TestPublisherConfirmsEnabled (0.00s)
+=== RUN   TestContextCheckBeforeRedisStore
+    publisher_test.go:251: ✅ Contexto checado ANTES de operações pesadas (Redis/RabbitMQ)
+--- PASS: TestContextCheckBeforeRedisStore (0.00s)
+=== RUN   TestDefensiveCopy
+    publisher_test.go:277: ✅ Cópia defensiva protege contra modificações do slice original
+--- PASS: TestDefensiveCopy (0.00s)
+PASS
+coverage: 21.7% of statements
+ok  	edge-video/v2/internal/messaging	2.439s	coverage: 21.7% of statements

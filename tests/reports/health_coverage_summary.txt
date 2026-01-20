@@ -1,0 +1,10 @@
+edge-video/v2/internal/health/publish_health.go:21:	NewPublishHealthMonitor	100.0%
+edge-video/v2/internal/health/publish_health.go:40:	RecordError		100.0%
+edge-video/v2/internal/health/publish_health.go:52:	RecordSuccess		100.0%
+edge-video/v2/internal/health/publish_health.go:66:	isDegradedUnsafe	100.0%
+edge-video/v2/internal/health/publish_health.go:88:	IsDegraded		100.0%
+edge-video/v2/internal/health/publish_health.go:97:	isEmergencyUnsafe	100.0%
+edge-video/v2/internal/health/publish_health.go:103:	IsEmergency		100.0%
+edge-video/v2/internal/health/publish_health.go:111:	GetStats		100.0%
+edge-video/v2/internal/health/publish_health.go:146:	Reset			100.0%
+total:							(statements)		100.0%

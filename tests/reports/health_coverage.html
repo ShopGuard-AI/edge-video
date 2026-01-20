@@ -1,0 +1,257 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>health: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">edge-video/v2/internal/health/publish_health.go (100.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package health
+
+import (
+        "sync"
+        "time"
+)
+
+// PublishHealthMonitor monitora a saúde das operações de publish
+// Detecta quando uma câmera está degradada (muitos erros de publish)
+type PublishHealthMonitor struct {
+        mu                sync.Mutex
+        recentErrors      []time.Time // Últimos N erros
+        recentSuccesses   []time.Time // Últimos N sucessos
+        consecutiveFails  int
+        lastSuccess       time.Time
+        windowSize        int     // Janela de análise (padrão: 10)
+        degradedThreshold float64 // Threshold (padrão: 0.8 = 80% erros)
+}
+
+// NewPublishHealthMonitor cria um novo monitor de saúde
+func NewPublishHealthMonitor(windowSize int, degradedThreshold float64) *PublishHealthMonitor <span class="cov8" title="1">{
+        if windowSize &lt;= 0 </span><span class="cov8" title="1">{
+                windowSize = 10 // Default: janela de 10 publishes
+        }</span>
+        <span class="cov8" title="1">if degradedThreshold &lt;= 0 || degradedThreshold &gt; 1.0 </span><span class="cov8" title="1">{
+                degradedThreshold = 0.8 // Default: 80% de erros = degraded
+        }</span>
+
+        <span class="cov8" title="1">return &amp;PublishHealthMonitor{
+                recentErrors:      make([]time.Time, 0, windowSize),
+                recentSuccesses:   make([]time.Time, 0, windowSize),
+                consecutiveFails:  0,
+                lastSuccess:       time.Now(),
+                windowSize:        windowSize,
+                degradedThreshold: degradedThreshold,
+        }</span>
+}
+
+// RecordError registra um erro de publish
+func (p *PublishHealthMonitor) RecordError() <span class="cov8" title="1">{
+        p.mu.Lock()
+        defer p.mu.Unlock()
+
+        p.recentErrors = append(p.recentErrors, time.Now())
+        if len(p.recentErrors) &gt; p.windowSize </span><span class="cov8" title="1">{
+                p.recentErrors = p.recentErrors[1:]
+        }</span>
+        <span class="cov8" title="1">p.consecutiveFails++</span>
+}
+
+// RecordSuccess registra um sucesso de publish
+func (p *PublishHealthMonitor) RecordSuccess() <span class="cov8" title="1">{
+        p.mu.Lock()
+        defer p.mu.Unlock()
+
+        p.recentSuccesses = append(p.recentSuccesses, time.Now())
+        if len(p.recentSuccesses) &gt; p.windowSize </span><span class="cov8" title="1">{
+                p.recentSuccesses = p.recentSuccesses[1:]
+        }</span>
+        <span class="cov8" title="1">p.consecutiveFails = 0
+        p.lastSuccess = time.Now()</span>
+}
+
+// isDegradedUnsafe verifica degradação SEM MUTEX (uso interno)
+// Deve ser chamado apenas quando o mutex já está sendo segurado
+func (p *PublishHealthMonitor) isDegradedUnsafe() bool <span class="cov8" title="1">{
+        // Calcula taxa de erro nos últimos N publishes
+        total := len(p.recentErrors) + len(p.recentSuccesses)
+        if total &lt; p.windowSize </span><span class="cov8" title="1">{
+                return false // Dados insuficientes, não considera degraded
+        }</span>
+
+        <span class="cov8" title="1">errorRate := float64(len(p.recentErrors)) / float64(total)
+
+        // Degraded se:
+        // - 80%+ de erros nos últimos N publishes
+        // OU
+        // - Sem sucesso há 30 segundos
+        return errorRate &gt;= p.degradedThreshold ||
+                time.Since(p.lastSuccess) &gt; 30*time.Second</span>
+}
+
+// IsDegraded verifica se o estado de publish está degradado (thread-safe)
+// Retorna true se:
+// - 80%+ de erros nos últimos N publishes
+// OU
+// - Sem sucesso há 30+ segundos
+func (p *PublishHealthMonitor) IsDegraded() bool <span class="cov8" title="1">{
+        p.mu.Lock()
+        defer p.mu.Unlock()
+
+        return p.isDegradedUnsafe()
+}</span>
+
+// isEmergencyUnsafe verifica emergência SEM MUTEX (uso interno)
+// Deve ser chamado apenas quando o mutex já está sendo segurado
+func (p *PublishHealthMonitor) isEmergencyUnsafe() bool <span class="cov8" title="1">{
+        return p.consecutiveFails &gt; 20
+}</span>
+
+// IsEmergency verifica se está em estado de emergência (thread-safe)
+// Retorna true se houve muitos failures consecutivos (&gt;20)
+func (p *PublishHealthMonitor) IsEmergency() bool <span class="cov8" title="1">{
+        p.mu.Lock()
+        defer p.mu.Unlock()
+
+        return p.isEmergencyUnsafe()
+}</span>
+
+// GetStats retorna estatísticas atuais (thread-safe)
+func (p *PublishHealthMonitor) GetStats() HealthStats <span class="cov8" title="1">{
+        p.mu.Lock()
+        defer p.mu.Unlock()
+
+        total := len(p.recentErrors) + len(p.recentSuccesses)
+        errorRate := 0.0
+        if total &gt; 0 </span><span class="cov8" title="1">{
+                errorRate = float64(len(p.recentErrors)) / float64(total)
+        }</span>
+
+        <span class="cov8" title="1">return HealthStats{
+                TotalRecent:      total,
+                RecentErrors:     len(p.recentErrors),
+                RecentSuccesses:  len(p.recentSuccesses),
+                ConsecutiveFails: p.consecutiveFails,
+                ErrorRate:        errorRate,
+                LastSuccess:      p.lastSuccess,
+                IsDegraded:       p.isDegradedUnsafe(),   // ✅ USA VERSÃO SEM MUTEX (mutex já está sendo segurado)
+                IsEmergency:      p.isEmergencyUnsafe(),  // ✅ USA VERSÃO SEM MUTEX (mutex já está sendo segurado)
+        }</span>
+}
+
+// HealthStats representa estatísticas de saúde
+type HealthStats struct {
+        TotalRecent      int
+        RecentErrors     int
+        RecentSuccesses  int
+        ConsecutiveFails int
+        ErrorRate        float64
+        LastSuccess      time.Time
+        IsDegraded       bool
+        IsEmergency      bool
+}
+
+// Reset limpa todas as estatísticas
+func (p *PublishHealthMonitor) Reset() <span class="cov8" title="1">{
+        p.mu.Lock()
+        defer p.mu.Unlock()
+
+        p.recentErrors = make([]time.Time, 0, p.windowSize)
+        p.recentSuccesses = make([]time.Time, 0, p.windowSize)
+        p.consecutiveFails = 0
+        p.lastSuccess = time.Now()
+}</span>
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

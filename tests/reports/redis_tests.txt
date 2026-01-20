@@ -1,0 +1,7 @@
+# edge-video/v2/internal/storage [edge-video/v2/internal/storage.test]
+internal\storage\redis_client_test.go:90:2: declared and not used: prefix
+internal\storage\redis_client_test.go:91:2: declared and not used: cameraID
+internal\storage\redis_client_test.go:92:2: declared and not used: timestamp
+internal\storage\redis_client_test.go:115:2: declared and not used: prefix
+FAIL	edge-video/v2/internal/storage [build failed]
+FAIL
