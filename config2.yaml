@@ -1,0 +1,136 @@
+# Configuração global
+fps: 15
+quality: 5
+
+# Configuração Avançada de Encoding (Opcional - Sobrescreve 'quality')
+encoding:
+  qsv_quality: 50  # 1-100 (Maior=Melhor Imagem). 85=Alta Qualidade, 40=Baixa Banda.
+  # resolution: "1280x720" # Se quiser redimensionar (ainda não implementado resize engine, apenas config)
+
+# Configuração AMQP global (usada como fallback)
+amqp:
+  url: "amqp://t3-labs:vTUaGG9S0Kbl_1AhqPxudML1jCYHRq0efkRDA6p_lgM@34.71.212.239:5672/t3-labs"
+  prefetch_count: 50           # QoS: máximo de frames não-confirmados por consumer (0 = ilimitado)
+  publisher_confirms: false    # Habilita Publisher Confirms (DESABILITAR se não houver consumer!)
+
+# Camera Registration API (POST /camera antes de criar exchanges)
+# Se habilitado, registra câmeras em API externa antes de criar exchanges
+camera_registration:
+  enabled: true                # Habilita registro de câmeras (true/false)
+  url: "http://35.209.75.208:32765/camera"  # URL da API de registro
+
+
+# Circuit Breaker (proteção contra falhas de câmera)
+# Se habilitado, câmeras que falham muito entram em backoff exponencial
+circuit_breaker:
+  enabled: true                # Habilita circuit breaker (true/false)
+  max_failures: 5              # Falhas consecutivas antes de abrir circuito
+  reset_timeout: 30s           # Tempo antes de tentar reconectar (HALF_OPEN)
+  half_open_successes: 3       # Sucessos em HALF_OPEN necessários para fechar
+  initial_backoff: 5s          # Backoff inicial quando abre circuito
+  max_backoff: 5m              # Backoff máximo (5 minutos)
+  backoff_multiplier: 2.0      # Multiplicador do backoff (5s → 10s → 20s → ...)
+
+# Memory Controller (gestão automática de memória)
+# Se habilitado, monitora uso de RAM e dispara GC quando necessário
+memory_controller:
+  enabled: false                # Habilita memory controller (true/false)
+  max_memory_mb: 2048          # Limite máximo de memória (MB) - ajuste conforme seu sistema
+  warning_percent: 60.0        # Nível WARNING (60% do max) - começa throttling leve
+  critical_percent: 75.0       # Nível CRITICAL (75% do max) - throttling médio
+  emergency_percent: 85.0      # Nível EMERGENCY (85% do max) - throttling agressivo
+  check_interval: 5s           # Intervalo de verificação de memória
+  gc_trigger_percent: 70.0     # Dispara GC quando atingir esse percentual
+
+# Resilience (Watchdog e Recovery)
+resilience:
+  watchdog_timeout: 15s      # Tempo sem frames antes de reiniciar (Stall detection)
+  initial_grace_period: 20s  # Tempo de carência ao iniciar
+
+# Worker Pool (Concorrência por câmera)
+worker_pool:
+  size: 10                   # Uploaders simultâneos p/ Redis por câmera (Aumentado p/ saturar throughput)
+
+# Redis (Importante: manter igual ao consumer!)
+redis:
+  enabled: true
+  address: "34.30.59.236:6379"
+  password: "MinhaSenhaMuitoForte@2024"
+  db: 0
+  pool_size: 20              # Pool de conexões (Default: 10 * CPU). Aumentar para alta concorrência.
+  vhost: "t3-labs"
+  prefix: "frames"
+  ttl: 120s
+  max_retries: 3
+  retry_delay: 100ms
+  timeout: 2s
+
+# Metadata Publisher (publicação de metadados no RabbitMQ)
+# Quando Redis habilitado: publica metadata JSON com redis_key
+# Quando Redis desabilitado: publica frame binário direto (modo atual)
+metadata:
+  enabled: true               # Publica metadados JSON separados (true/false)
+  include_redis_key: true      # Incluir redis_key nos metadados (se redis enabled)
+
+# Monitoring (portas de serviços de monitoramento)
+# auto_port: se true, tenta portas alternativas se a configurada estiver ocupada
+monitoring:
+  metrics_port: 2112          # Porta do Prometheus metrics (default: 2112)
+  pprof_port: 6060            # Porta do pprof debug (default: 6060)
+  auto_port: true             # Tenta portas alternativas se ocupadas (útil para E2E tests)
+
+# Câmeras com configuração INDIVIDUAL de exchange e routing_key
+# Câmeras
+# Câmeras
+cameras:
+  # Câmera Mestra (Corredor) - Já existente
+  - id: "camera-corredor"
+    url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=4&subtype=0"
+    exchange: "t3-labs.exchange"
+    routing_key: "t3-labs.cam1"
+
+  # Mercado Autônomo (RTMP)
+  - id: "cam-mercado"
+    url: "rtmp://str-rtmp-001.monuv.com.br:1935/rtmp/96159.stream"
+    exchange: "t3-labs.exchange"
+    routing_key: "t3-labs.cam-mercado"
+
+  # Pix Force (Canais 1-5)
+  - id: "cam-pix-1"
+    url: "rtsp://pixforce:pixforce1234@186.193.228.105:12554/cam/realmonitor?channel=1&subtype=0"
+    exchange: "t3-labs.exchange"
+    routing_key: "t3-labs.pix1"
+  - id: "cam-pix-2"
+    url: "rtsp://pixforce:pixforce1234@186.193.228.105:12554/cam/realmonitor?channel=2&subtype=0"
+    exchange: "t3-labs.exchange"
+    routing_key: "t3-labs.pix2"
+  - id: "cam-pix-3"
+    url: "rtsp://pixforce:pixforce1234@186.193.228.105:12554/cam/realmonitor?channel=3&subtype=0"
+    exchange: "t3-labs.exchange"
+    routing_key: "t3-labs.pix3"
+  - id: "cam-pix-4"
+    url: "rtsp://pixforce:pixforce1234@186.193.228.105:12554/cam/realmonitor?channel=4&subtype=0"
+    exchange: "t3-labs.exchange"
+    routing_key: "t3-labs.pix4"
+  - id: "cam-pix-5"
+    url: "rtsp://pixforce:pixforce1234@186.193.228.105:12554/cam/realmonitor?channel=5&subtype=0"
+    exchange: "t3-labs.exchange"
+    routing_key: "t3-labs.pix5"
+
+  # ShopGuard (Canais 1-3, 5 - já temos a 4 como corredor)
+  - id: "cam-shop-1"
+    url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=1&subtype=0"
+    exchange: "t3-labs.exchange"
+    routing_key: "t3-labs.shop1"
+  - id: "cam-shop-2"
+    url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=2&subtype=0"
+    exchange: "t3-labs.exchange"
+    routing_key: "t3-labs.shop2"
+  - id: "cam-shop-3"
+    url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=3&subtype=0"
+    exchange: "t3-labs.exchange"
+    routing_key: "t3-labs.shop3"
+  - id: "cam-shop-5"
+    url: "rtsp://shopguard:!Sg36786@191.7.178.101:8554/cam/realmonitor?channel=5&subtype=0"
+    exchange: "t3-labs.exchange"
+    routing_key: "t3-labs.shop5"

@@ -31,12 +31,13 @@ type RedisConfig struct {
 	Address    string        `yaml:"address"`
 	Password   string        `yaml:"password"`
 	DB         int           `yaml:"db"`
+	PoolSize   int           `yaml:"pool_size"` // Pool de conexões
 	Vhost      string        `yaml:"vhost"`     // VHost do RabbitMQ (prefixo da chave Redis)
 	Prefix     string        `yaml:"prefix"`
 	TTL        time.Duration `yaml:"ttl"`
 	MaxRetries int           `yaml:"max_retries"`
 	RetryDelay time.Duration `yaml:"retry_delay"`
-	Timeout    time.Duration `yaml:"timeout"`    // Timeout por operação (Store/Get)
+	Timeout    time.Duration `yaml:"timeout"` // Timeout por operação (Store/Get)
 }
 
 // NewRedisClient cria novo cliente Redis
@@ -69,6 +70,7 @@ func NewRedisClient(config RedisConfig) (*RedisClient, error) {
 		Addr:     config.Address,
 		Password: config.Password,
 		DB:       config.DB,
+		PoolSize: config.PoolSize, // Usa valor configurado (0 = default 10*CPU)
 	})
 
 	// Testa conexão

@@ -267,10 +267,10 @@ func main() {
 		publisher, err := messaging.NewPublisher(
 			cfg.AMQP.URL,
 			exchange,
-			routingKey,                       // Passa routing_key COMPLETA ao invés de prefixo
-			cfg.AMQP.PrefetchCount,       // QoS: prefetch_count configurável via YAML
-			cfg.AMQP.PublisherConfirms,   // Publisher Confirms (DEVE SER FALSE se não houver consumer!)
-			redisClient,                      // Passa Redis client (pode ser nil se disabled)
+			routingKey,                 // Passa routing_key COMPLETA ao invés de prefixo
+			cfg.AMQP.PrefetchCount,     // QoS: prefetch_count configurável via YAML
+			cfg.AMQP.PublisherConfirms, // Publisher Confirms (DEVE SER FALSE se não houver consumer!)
+			redisClient,                // Passa Redis client (pode ser nil se disabled)
 		)
 		if err != nil {
 			log.Fatalf("ERRO ao criar publisher para %s: %v", camCfg.ID, err)
@@ -286,9 +286,13 @@ func main() {
 			camCfg.URL,
 			cfg.FPS,
 			cfg.Quality,
+			cfg.Encoding, // Nova config de encoding
 			publisher,
-			cfg.CircuitBreaker, // Passa config do circuit breaker
-			metricsServer,         // Passa metrics server para tracking
+			cfg.CircuitBreaker,                // Passa config do circuit breaker
+			metricsServer,                     // Passa metrics server para tracking
+			cfg.WorkerPool.Size,               // Worker Pool Size
+			cfg.Resilience.WatchdogTimeout,    // Watchdog Timeout
+			cfg.Resilience.InitialGracePeriod, // Initial Grace Period
 		)
 
 		cam.Start()

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"edge-video/v2/internal/memory"
 	"edge-video/v2/internal/resilience"
@@ -13,16 +14,30 @@ import (
 
 // Config representa a configuração do sistema
 type Config struct {
-	FPS                  int                              `yaml:"fps"`
-	Quality              int                              `yaml:"quality"`
-	AMQP                 AMQPConfig                       `yaml:"amqp"`
-	CameraRegistration   CameraRegistrationConfig         `yaml:"camera_registration"`
-	CircuitBreaker       resilience.CircuitBreakerConfig  `yaml:"circuit_breaker"`
-	MemoryController     memory.MemoryControllerConfig    `yaml:"memory_controller"`
-	Redis                storage.RedisConfig              `yaml:"redis"`
-	Metadata             MetadataConfig                   `yaml:"metadata"`
-	Monitoring           MonitoringConfig                 `yaml:"monitoring"`
-	Cameras              []CamConfig                      `yaml:"cameras"`
+	FPS                int                             `yaml:"fps"`
+	Quality            int                             `yaml:"quality"`
+	AMQP               AMQPConfig                      `yaml:"amqp"`
+	Resilience         ResilienceConfig                `yaml:"resilience"`
+	WorkerPool         WorkerPoolConfig                `yaml:"worker_pool"`
+	CameraRegistration CameraRegistrationConfig        `yaml:"camera_registration"`
+	CircuitBreaker     resilience.CircuitBreakerConfig `yaml:"circuit_breaker"`
+	MemoryController   memory.MemoryControllerConfig   `yaml:"memory_controller"`
+	Redis              storage.RedisConfig             `yaml:"redis"`
+	Metadata           MetadataConfig                  `yaml:"metadata"`
+	Encoding           EncodingConfig                  `yaml:"encoding"`
+	Monitoring         MonitoringConfig                `yaml:"monitoring"`
+	Cameras            []CamConfig                     `yaml:"cameras"`
+}
+
+// ResilienceConfig configuração de resiliência (Watchdog)
+type ResilienceConfig struct {
+	WatchdogTimeout    time.Duration `yaml:"watchdog_timeout"`
+	InitialGracePeriod time.Duration `yaml:"initial_grace_period"`
+}
+
+// WorkerPoolConfig configuração de concorrência
+type WorkerPoolConfig struct {
+	Size int `yaml:"size"`
 }
 
 // CameraRegistrationConfig configuração da API de registro de câmeras
@@ -40,8 +55,8 @@ type MonitoringConfig struct {
 
 // MetadataConfig configuração de publicação de metadados
 type MetadataConfig struct {
-	Enabled          bool `yaml:"enabled"`
-	IncludeRedisKey  bool `yaml:"include_redis_key"`
+	Enabled         bool `yaml:"enabled"`
+	IncludeRedisKey bool `yaml:"include_redis_key"`
 }
 
 // AMQPConfig configuração do RabbitMQ
@@ -53,11 +68,17 @@ type AMQPConfig struct {
 	PublisherConfirms bool   `yaml:"publisher_confirms"` // Habilita Publisher Confirms (deve ser false se não houver consumer!)
 }
 
+// EncodingConfig configuração refinada de encoding (Video Quality)
+type EncodingConfig struct {
+	QSVQuality int    `yaml:"qsv_quality"` // Override para QSV Global Quality (1-100)
+	Resolution string `yaml:"resolution"`  // Resolução de saída (ex: "1920x1080"). Se vazio, mantém original.
+}
+
 // CamConfig configuração de câmera
 type CamConfig struct {
 	ID         string `yaml:"id"`
 	URL        string `yaml:"url"`
-	Exchange   string `yaml:"exchange"`   // Exchange dedicado para esta câmera
+	Exchange   string `yaml:"exchange"`    // Exchange dedicado para esta câmera
 	RoutingKey string `yaml:"routing_key"` // Routing key dedicada para esta câmera
 }
 
@@ -107,6 +128,19 @@ func LoadConfig(filename string) (*Config, error) {
 		if err := memory.ValidateMemoryControllerConfig(config.MemoryController); err != nil {
 			return nil, fmt.Errorf("erro na configuração de memory_controller: %w", err)
 		}
+	}
+
+	// Defaults para Resilience
+	if config.Resilience.WatchdogTimeout == 0 {
+		config.Resilience.WatchdogTimeout = 15 * time.Second
+	}
+	if config.Resilience.InitialGracePeriod == 0 {
+		config.Resilience.InitialGracePeriod = 20 * time.Second
+	}
+
+	// Defaults para WorkerPool
+	if config.WorkerPool.Size == 0 {
+		config.WorkerPool.Size = 3
 	}
 
 	// Se monitoring não configurado, usa defaults
